@@ -6,6 +6,7 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.qa/
 .ruff_cache/
 .mypy_cache/
 .coverage

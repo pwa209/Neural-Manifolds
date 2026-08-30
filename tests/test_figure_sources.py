@@ -67,19 +67,29 @@ datasets:
     tms = root / "tms.parquet"
     pd.DataFrame(
         {
-            "participant_id": ["p1", "p2"],
-            "condition": ["awake", "sedation"],
-            "reachability": [0.4, 0.2],
-            "maximum_displacement": [0.5, 0.25],
+            "participant_id": ["p1", "p1", "p2", "p2"],
+            "condition": [
+                "awake",
+                "propofol_sedation",
+                "awake",
+                "propofol_sedation",
+            ],
+            "reachability": [0.4, 0.2, 0.6, 0.3],
+            "maximum_displacement": [0.5, 0.25, 0.9, 0.4],
         }
     ).to_parquet(tms, index=False)
     trajectory = root / "trajectory.parquet"
     pd.DataFrame(
         {
-            "participant_id": ["p1", "p2"],
-            "condition": ["awake", "sedation"],
-            "time_ms": [0.0, 0.0],
-            "trajectory_value": [1.0, 0.7],
+            "participant_id": ["p1", "p1", "p2", "p2"],
+            "condition": [
+                "awake",
+                "propofol_sedation",
+                "awake",
+                "propofol_sedation",
+            ],
+            "time_ms": [0.0, 0.0, 0.0, 0.0],
+            "trajectory_value": [1.0, 0.7, 1.1, 0.6],
         }
     ).to_parquet(trajectory, index=False)
     return {
@@ -124,6 +134,32 @@ def test_sources_are_true_participant_contrasts_and_effect_survival(tmp_path: Pa
     loaded = load_source_bundle("models", models)
     assert set(loaded.tables) == {"content_report", "contrast_status", "robustness"}
 
+    tms_participants = pd.read_parquet(bundles[2] / "tms_participants.parquet")
+    assert set(tms_participants["tms_contrast"]) == {"awake_minus_propofol_sedation"}
+    participant_deltas = tms_participants.drop_duplicates("participant_id").set_index(
+        "participant_id"
+    )
+    assert participant_deltas.loc["p1", "passive_delta"] == pytest.approx(0.2)
+    assert participant_deltas.loc["p1", "direct_delta"] == pytest.approx(0.25)
+    assert participant_deltas.loc["p2", "passive_delta"] == pytest.approx(0.3)
+    assert participant_deltas.loc["p2", "direct_delta"] == pytest.approx(0.5)
+
+
+def test_tms_figure_source_refuses_an_incomplete_condition_pair(tmp_path: Path) -> None:
+    inputs = _write_contrast_inputs(tmp_path)
+    tms = pd.read_parquet(inputs["tms"])
+    tms = tms[~(tms["participant_id"].eq("p2") & tms["condition"].eq("propofol_sedation"))]
+    tms.to_parquet(inputs["tms"], index=False)
+    with pytest.raises(ValueError, match="refuses incomplete"):
+        prepare_figure_sources(
+            profiles_path=inputs["profiles"],
+            nulls_path=inputs["nulls"],
+            contrasts_path=inputs["contrasts"],
+            tms_outcomes_path=inputs["tms"],
+            tms_trajectory_path=inputs["trajectory"],
+            output_root=tmp_path / "incomplete",
+        )
+
 
 def test_clinical_builder_will_not_invent_locked_endpoint(tmp_path: Path) -> None:
     clinical = tmp_path / "clinical.parquet"
@@ -135,7 +171,7 @@ def test_clinical_builder_will_not_invent_locked_endpoint(tmp_path: Path) -> Non
             **{axis: [0.1] for axis in AXIS_NAMES},
         }
     ).to_parquet(clinical, index=False)
-    with pytest.raises(ValueError, match="will not derive a replacement endpoint"):
+    with pytest.raises(ValueError, match="will not derive or impute"):
         prepare_clinical_figure_source(
             clinical_profiles_path=clinical,
             output_root=tmp_path / "clinical_bundle",

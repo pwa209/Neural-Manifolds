@@ -169,6 +169,10 @@ DREAM_EXPERIENCE = {
     -4: ("unknown_experience", None, None, False),
 }
 DREAM_FILE = re.compile(r"/?s(?P<subject>\d+)_ep(?P<episode>\d+)\.edf")
+DREAM_AWAKENING_TIME = re.compile(
+    r"(?P<hour>(?:[01]?\d|2[0-3])):(?P<minute>[0-5]\d):(?P<second>[0-5]\d)"
+)
+DREAM_PRIMARY_SECONDS = 20.0
 
 
 class DreamSerialAwakeningsAdapter:
@@ -201,6 +205,18 @@ class DreamSerialAwakeningsAdapter:
             condition, report, content, contrast_eligible = DREAM_EXPERIENCE[experience]
             duration = number(row["Duration"], field="Duration", minimum=0.001)
             assert duration is not None
+            if duration < DREAM_PRIMARY_SECONDS:
+                raise SchemaError(
+                    f"DREAM Duration must contain the final {DREAM_PRIMARY_SECONDS:g}s "
+                    "before awakening"
+                )
+            awakening_time = text(row["Time of awakening"], field="Time of awakening")
+            assert awakening_time is not None
+            match(
+                DREAM_AWAKENING_TIME,
+                awakening_time,
+                field="DREAM Time of awakening",
+            )
             sleep_stage = integer(row["Last sleep stage"], field="Last sleep stage")
             if sleep_stage not in {0, 1, 2, 3, 5}:
                 raise SchemaError(f"undocumented DREAM sleep-stage code: {sleep_stage}")
@@ -218,7 +234,9 @@ class DreamSerialAwakeningsAdapter:
                     source_file=f"Data/PSG/{normalized_file}",
                     modality="psg",
                     selector=SignalSelector(
-                        kind="interval_seconds", start_seconds=0.0, stop_seconds=duration
+                        kind="interval_seconds",
+                        start_seconds=duration - DREAM_PRIMARY_SECONDS,
+                        stop_seconds=duration,
                     ),
                     condition=condition,
                     explanatory_target="experienced_content",
@@ -232,8 +250,24 @@ class DreamSerialAwakeningsAdapter:
                     else ("ambiguous" if not contrast_eligible else "verified"),
                     variables={
                         "experience_code": experience,
-                        "contrast_eligible": contrast_eligible,
+                        "experience_category_unambiguous": contrast_eligible,
+                        "dream_primary_contrast_eligible": (
+                            sleep_stage == 2 and experience in {0, 2}
+                        ),
+                        "dream_experience_ordinal": (
+                            experience if experience in {0, 1, 2} else None
+                        ),
                         "last_sleep_stage_code": sleep_stage,
+                        "last_sleep_stage": {
+                            0: "wake",
+                            1: "N1",
+                            2: "N2",
+                            3: "N3",
+                            5: "REM",
+                        }[sleep_stage],
+                        "awakening_time_hms": awakening_time,
+                        "analysis_interval_seconds": DREAM_PRIMARY_SECONDS,
+                        "analysis_interval_position": "final_20s_before_awakening",
                         "sample_rate_hz": number(
                             row["EEG sample rate"], field="EEG sample rate", minimum=1
                         ),

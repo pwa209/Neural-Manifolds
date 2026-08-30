@@ -22,6 +22,7 @@ from neural_manifolds.adapters import (
     encoding_view,
 )
 from neural_manifolds.provenance import atomic_write_json
+from neural_manifolds.tms_separation import DIRECT_TMS_MODALITY
 
 DATASET_IDS = (
     "propofol_tms_eeg",
@@ -140,6 +141,7 @@ def build_cohort_manifest(
     labels: list[dict[str, Any]] = []
     encoder_rows: list[dict[str, Any]] = []
     issues: list[dict[str, str]] = []
+    direct_tms_units: list[dict[str, str]] = []
     selected_ids = DATASET_IDS if dataset_ids is None else dataset_ids
     if not selected_ids or len(selected_ids) != len(set(selected_ids)):
         raise ValueError("dataset_ids must be a non-empty unique tuple")
@@ -156,6 +158,15 @@ def build_cohort_manifest(
             for unit in units:
                 flattened = _flatten_unit(unit, release)
                 labels.append(flattened)
+                if unit.modality == DIRECT_TMS_MODALITY:
+                    direct_tms_units.append(
+                        {
+                            "unit_id": unit.unit_id,
+                            "dataset_id": unit.dataset_id,
+                            "source_path": flattened["source_path"],
+                        }
+                    )
+                    continue
                 view = encoding_view(unit).model_dump(mode="json")
                 encoder_rows.append(
                     {
@@ -192,9 +203,17 @@ def build_cohort_manifest(
         {
             "schema_version": 1,
             "analysis_units": len(labels),
+            "general_encoder_units": len(encoder_rows),
             "datasets_represented": sorted({row["dataset_id"] for row in labels}),
             "issues": issues,
             "labels_joined_after_encoding": True,
+            "direct_tms_separation": {
+                "status": "omitted_from_general_encoder_inputs",
+                "reason": "requires_dedicated_pulse_interpolation_and_tms_preprocessing",
+                "retained_in_cohort_labels": True,
+                "raw_lineage_retained": True,
+                "dedicated_tms_units": direct_tms_units,
+            },
             "scientific_gate_applied": False,
         },
     )

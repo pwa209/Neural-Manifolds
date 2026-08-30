@@ -18,6 +18,46 @@ import numpy as np
 from scipy import signal, stats
 
 LEGACY_CHANNEL_MAP = {"T3": "T7", "T4": "T8", "T5": "P7", "T6": "P8"}
+NATIVE_AVERAGE_REFERENCE_BRANCH = "native_full_montage_average_reference"
+NATIVE_CSD_BRANCH = "native_full_montage_csd"
+SLEEP_HIGHPASS_BRANCH = "sleep_highpass_sensitivity"
+SENSITIVITY_BRANCHES = (
+    NATIVE_AVERAGE_REFERENCE_BRANCH,
+    NATIVE_CSD_BRANCH,
+    SLEEP_HIGHPASS_BRANCH,
+)
+SENSITIVITY_PROCESSING_ERRORS = (
+    AttributeError,
+    KeyError,
+    NotImplementedError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    np.linalg.LinAlgError,
+)
+
+
+@dataclass(frozen=True)
+class SensitivityBranchResult:
+    """One optional preprocessing branch with an explicit availability state."""
+
+    raw: Any | None
+    status: str
+    reason: str | None
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.status not in {"available", "unavailable", "not_applicable", "disabled"}:
+            raise ValueError(f"invalid sensitivity status: {self.status}")
+        if self.status == "available" and self.raw is None:
+            raise ValueError("an available sensitivity branch requires a signal object")
+        if self.status != "available" and self.raw is not None:
+            raise ValueError("an unavailable sensitivity branch cannot contain signal")
+        if self.status == "available" and self.reason is not None:
+            raise ValueError("an available sensitivity branch cannot have an unavailable reason")
+        if self.status != "available" and not self.reason:
+            raise ValueError("an unavailable sensitivity branch requires a reason")
 
 
 def canonicalize_channel_name(name: str) -> str:
@@ -25,7 +65,7 @@ def canonicalize_channel_name(name: str) -> str:
 
     value = name.strip().upper()
     value = re.sub(r"^(EEG|POLY)\s*", "", value)
-    value = re.sub(r"[-_](REF|LE|RE|AVG|A1|A2)$", "", value)
+    value = re.sub(r"[-_:](REF|LE|RE|AVG|A1|A2)$", "", value)
     value = value.replace(" ", "")
     value = LEGACY_CHANNEL_MAP.get(value, value)
     if value.startswith("FP"):
@@ -204,6 +244,184 @@ def resample_array(data: np.ndarray, source_hz: float, target_hz: float) -> np.n
     return signal.resample_poly(data, ratio.numerator, ratio.denominator, axis=-1)
 
 
+def auxiliary_channel_inventory(raw: Any) -> dict[str, Any]:
+    """Audit auxiliary channels without claiming that they were used for ICA."""
+
+    names = list(getattr(raw, "ch_names", []))
+    getter = getattr(raw, "get_channel_types", None)
+    try:
+        channel_types = list(getter()) if callable(getter) else []
+    except (RuntimeError, ValueError, TypeError):
+        channel_types = []
+    if len(channel_types) != len(names):
+        return {
+            "metadata_status": "unavailable_channel_type_metadata",
+            "channels": {"eog": [], "ecg": [], "emg": []},
+            "ica_support_status": "unavailable_channel_type_metadata",
+            "ica_status": "not_performed_unavailable_channel_type_metadata",
+            "auxiliary_artifact_control_support_status": ("unavailable_channel_type_metadata"),
+            "auxiliary_artifact_control_status": (
+                "not_performed_unavailable_channel_type_metadata"
+            ),
+            "auxiliary_channels_used_for_cleaning": False,
+        }
+    channels = {
+        kind: [
+            name for name, observed in zip(names, channel_types, strict=True) if observed == kind
+        ]
+        for kind in ("eog", "ecg", "emg")
+    }
+    support = bool(channels["eog"] or channels["ecg"])
+    return {
+        "metadata_status": "available",
+        "channels": channels,
+        "ica_support_status": (
+            "available_eog_or_ecg_reference" if support else "unavailable_no_eog_or_ecg_reference"
+        ),
+        "ica_status": (
+            "not_performed_policy_report_only_with_auxiliary_support"
+            if support
+            else "not_performed_no_eog_or_ecg_reference"
+        ),
+        "auxiliary_artifact_control_support_status": (
+            "available_eog_ecg_or_emg_reference"
+            if any(channels.values())
+            else "unavailable_no_auxiliary_reference"
+        ),
+        "auxiliary_artifact_control_status": (
+            "not_performed_policy_report_only_with_auxiliary_support"
+            if any(channels.values())
+            else "not_performed_no_auxiliary_reference"
+        ),
+        "auxiliary_channels_used_for_cleaning": False,
+    }
+
+
+def _effective_lowpass(sfreq: float, requested_hz: float) -> float:
+    nyquist = sfreq / 2.0
+    # Leave transition-band room instead of requesting an unrealizable cutoff
+    # infinitesimally below Nyquist on low-sampling-rate source recordings.
+    effective = min(float(requested_hz), 0.95 * nyquist)
+    if effective <= 0:
+        raise ValueError("sampling frequency does not permit a positive low-pass cutoff")
+    return effective
+
+
+def _filter_and_resample(
+    raw: Any,
+    *,
+    highpass_hz: float,
+    lowpass_hz: float,
+    notch_hz: float | None,
+    target_sampling_hz: float,
+) -> dict[str, Any]:
+    source_hz = float(raw.info["sfreq"])
+    effective_lowpass = _effective_lowpass(source_hz, lowpass_hz)
+    if highpass_hz >= effective_lowpass:
+        raise ValueError("high-pass cutoff must be below the effective low-pass cutoff")
+    raw.filter(highpass_hz, effective_lowpass, method="fir", phase="zero-double")
+    applied_notches: list[float] = []
+    if notch_hz is not None and 0 < notch_hz < source_hz / 2:
+        applied_notches = np.arange(notch_hz, source_hz / 2, notch_hz).astype(float).tolist()
+        if applied_notches:
+            raw.notch_filter(applied_notches, method="fir", phase="zero-double")
+    if not np.isclose(source_hz, target_sampling_hz):
+        raw.resample(target_sampling_hz, method="polyphase")
+    return {
+        "source_sampling_hz": source_hz,
+        "target_sampling_hz": float(raw.info["sfreq"]),
+        "requested_highpass_hz": float(highpass_hz),
+        "applied_highpass_hz": float(highpass_hz),
+        "requested_lowpass_hz": float(lowpass_hz),
+        "applied_lowpass_hz": float(effective_lowpass),
+        "requested_notch_hz": notch_hz,
+        "applied_notch_hz": applied_notches,
+    }
+
+
+def _position_inventory(raw: Any) -> dict[str, Any]:
+    names = list(raw.ch_names)
+    try:
+        montage = raw.get_montage()
+        positions = {} if montage is None else montage.get_positions().get("ch_pos", {})
+    except (AttributeError, RuntimeError, ValueError, TypeError):
+        positions = {}
+    positioned = []
+    for name in names:
+        value = positions.get(name)
+        if value is not None and np.asarray(value).shape == (3,) and np.all(np.isfinite(value)):
+            positioned.append(name)
+    return {
+        "channel_count": len(names),
+        "positioned_channel_count": len(positioned),
+        "position_fraction": len(positioned) / len(names) if names else 0.0,
+        "missing_position_channels": [name for name in names if name not in set(positioned)],
+    }
+
+
+def _native_average_reference(
+    raw: Any,
+    *,
+    target_sampling_hz: float,
+    highpass_hz: float,
+    lowpass_hz: float,
+    notch_hz: float | None,
+    maximum_interpolation_fraction: float,
+) -> tuple[Any, dict[str, Any]]:
+    native = raw.copy().load_data()
+    original_names = list(native.ch_names)
+    getter = getattr(native, "get_channel_types", None)
+    if not callable(getter):
+        raise ValueError("channel type metadata are unavailable")
+    channel_types = list(getter())
+    if len(channel_types) != len(original_names):
+        raise ValueError("channel type metadata do not align with channel names")
+    eeg_original = [
+        name for name, kind in zip(original_names, channel_types, strict=True) if kind == "eeg"
+    ]
+    if len(eeg_original) < 2:
+        raise ValueError("native sensitivity requires at least two EEG channels")
+    rename = {name: canonicalize_channel_name(name) for name in eeg_original}
+    if len(set(rename.values())) != len(rename):
+        raise ValueError("canonicalized native EEG channel names are not unique")
+    native.rename_channels(rename, allow_duplicates=False)
+    eeg_names = [rename[name] for name in eeg_original]
+    native.pick(eeg_names, ordered=True)
+    quality = detect_bad_channels(native.get_data(), float(native.info["sfreq"]))
+    bad_names = [native.ch_names[index] for index in quality.bad_indices]
+    maximum_bad = int(np.floor(maximum_interpolation_fraction * len(native.ch_names)))
+    if len(bad_names) > maximum_bad:
+        raise ValueError(
+            f"{len(bad_names)} native bad channels exceeds interpolation limit {maximum_bad}"
+        )
+    filter_metadata = _filter_and_resample(
+        native,
+        highpass_hz=highpass_hz,
+        lowpass_hz=lowpass_hz,
+        notch_hz=notch_hz,
+        target_sampling_hz=target_sampling_hz,
+    )
+    if bad_names:
+        native.info["bads"] = bad_names
+        try:
+            native.interpolate_bads(reset_bads=True, mode="accurate")
+        except SENSITIVITY_PROCESSING_ERRORS as error:
+            raise ValueError(
+                "native bad-channel interpolation requires valid electrode positions"
+            ) from error
+    native.set_eeg_reference("average", projection=False)
+    return native, {
+        "branch": NATIVE_AVERAGE_REFERENCE_BRANCH,
+        "original_channels": original_names,
+        "selected_eeg_channels": list(native.ch_names),
+        "renamed_eeg_channels": rename,
+        "bad_channels": bad_names,
+        "reference": "average",
+        **filter_metadata,
+        "position_inventory": _position_inventory(native),
+    }
+
+
 def preprocess_mne_raw(
     raw: Any,
     *,
@@ -213,6 +431,7 @@ def preprocess_mne_raw(
     lowpass_hz: float = 75.0,
     notch_hz: float | None = None,
     maximum_interpolation_fraction: float = 0.15,
+    require_complete_canonical: bool = True,
 ) -> tuple[Any, dict[str, Any]]:
     """Apply the primary harmonisation track to a preloaded MNE Raw object.
 
@@ -237,19 +456,34 @@ def preprocess_mne_raw(
 
     quality = detect_bad_channels(clean.get_data(), float(clean.info["sfreq"]))
     bad_names = [clean.ch_names[index] for index in quality.bad_indices]
-    maximum_bad = int(np.floor(maximum_interpolation_fraction * len(clean.ch_names)))
-    if len(bad_names) > maximum_bad:
-        raise ValueError(f"{len(bad_names)} bad channels exceeds interpolation limit {maximum_bad}")
-    clean.info["bads"] = bad_names
-    clean.filter(highpass_hz, lowpass_hz, method="fir", phase="zero-double")
-    if notch_hz is not None and notch_hz < clean.info["sfreq"] / 2:
-        harmonics = np.arange(notch_hz, clean.info["sfreq"] / 2, notch_hz)
-        clean.notch_filter(harmonics, method="fir", phase="zero-double")
-    if bad_names:
+    missing_names = [name for name in canonical_channels if name not in available]
+    interpolated_names = [*bad_names, *(missing_names if require_complete_canonical else [])]
+    denominator = len(canonical_channels) if require_complete_canonical else len(available)
+    maximum_bad = int(np.floor(maximum_interpolation_fraction * denominator))
+    if len(interpolated_names) > maximum_bad:
+        raise ValueError(
+            f"{len(interpolated_names)} bad/missing channels exceeds interpolation limit "
+            f"{maximum_bad}"
+        )
+    filter_metadata = _filter_and_resample(
+        clean,
+        highpass_hz=highpass_hz,
+        lowpass_hz=lowpass_hz,
+        notch_hz=notch_hz,
+        target_sampling_hz=target_sampling_hz,
+    )
+    if require_complete_canonical and missing_names:
+        mne.add_reference_channels(clean, missing_names, copy=False)
+    if interpolated_names:
+        montage = mne.channels.make_standard_montage("standard_1020")
+        clean.set_montage(montage, match_case=False, on_missing="raise")
+        clean.info["bads"] = interpolated_names
         clean.interpolate_bads(reset_bads=True, mode="accurate")
+    if require_complete_canonical:
+        clean.pick(list(canonical_channels), ordered=True)
+        if list(clean.ch_names) != list(canonical_channels):
+            raise RuntimeError("harmonised preprocessing did not produce the configured montage")
     clean.set_eeg_reference("average", projection=False)
-    if not np.isclose(clean.info["sfreq"], target_sampling_hz):
-        clean.resample(target_sampling_hz, method="polyphase")
 
     provenance = {
         "mne_version": mne.__version__,
@@ -257,13 +491,204 @@ def preprocess_mne_raw(
         "renamed_channels": rename,
         "selected_channels": list(clean.ch_names),
         "bad_channels": bad_names,
-        "source_sampling_hz": float(raw.info["sfreq"]),
-        "target_sampling_hz": float(clean.info["sfreq"]),
-        "highpass_hz": highpass_hz,
-        "lowpass_hz": lowpass_hz,
-        "notch_hz": notch_hz,
+        "missing_canonical_channels": missing_names,
+        "interpolated_channels": interpolated_names,
+        "maximum_interpolated_channels": maximum_bad,
+        "canonical_montage_complete": list(clean.ch_names) == list(canonical_channels),
+        "reference": "average",
+        "auxiliary_channel_audit": auxiliary_channel_inventory(raw),
+        **filter_metadata,
     }
     return clean, provenance
+
+
+def preprocess_mne_sensitivity_branches(
+    raw: Any,
+    *,
+    canonical_channels: Sequence[str],
+    target_sampling_hz: float,
+    primary_highpass_hz: float,
+    sleep_highpass_hz: float,
+    lowpass_hz: float,
+    notch_hz: float | None,
+    maximum_interpolation_fraction: float,
+    require_complete_canonical: bool,
+    native_montage_sensitivity: bool,
+    csd_sensitivity: bool,
+    csd_minimum_channels: int,
+    csd_minimum_position_fraction: float,
+    is_sleep_recording: bool,
+) -> dict[str, SensitivityBranchResult]:
+    """Create configured label-free preprocessing sensitivities independently.
+
+    A failed sensitivity never removes an otherwise valid primary derivative. Every
+    branch is returned with a fixed availability state and auditable reason.
+    """
+
+    try:
+        import mne
+    except ImportError as exc:  # pragma: no cover - exercised in EEG environment
+        raise RuntimeError("install neural-manifolds[eeg] for MNE preprocessing") from exc
+
+    results: dict[str, SensitivityBranchResult] = {}
+    native: Any | None = None
+    native_metadata: dict[str, Any] = {}
+    if native_montage_sensitivity:
+        try:
+            native, native_metadata = _native_average_reference(
+                raw,
+                target_sampling_hz=target_sampling_hz,
+                highpass_hz=primary_highpass_hz,
+                lowpass_hz=lowpass_hz,
+                notch_hz=notch_hz,
+                maximum_interpolation_fraction=maximum_interpolation_fraction,
+            )
+        except SENSITIVITY_PROCESSING_ERRORS as error:
+            results[NATIVE_AVERAGE_REFERENCE_BRANCH] = SensitivityBranchResult(
+                raw=None,
+                status="unavailable",
+                reason=f"{type(error).__name__}: {error}",
+                metadata={"branch": NATIVE_AVERAGE_REFERENCE_BRANCH},
+            )
+        else:
+            results[NATIVE_AVERAGE_REFERENCE_BRANCH] = SensitivityBranchResult(
+                raw=native,
+                status="available",
+                reason=None,
+                metadata=native_metadata,
+            )
+    else:
+        results[NATIVE_AVERAGE_REFERENCE_BRANCH] = SensitivityBranchResult(
+            raw=None,
+            status="disabled",
+            reason="native_montage_sensitivity_disabled_by_configuration",
+            metadata={"branch": NATIVE_AVERAGE_REFERENCE_BRANCH},
+        )
+
+    if not csd_sensitivity:
+        results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+            raw=None,
+            status="disabled",
+            reason="csd_sensitivity_disabled_by_configuration",
+            metadata={"branch": NATIVE_CSD_BRANCH},
+        )
+    elif native is None:
+        results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+            raw=None,
+            status="unavailable",
+            reason="native_average_reference_dependency_unavailable",
+            metadata={"branch": NATIVE_CSD_BRANCH},
+        )
+    else:
+        position_inventory = _position_inventory(native)
+        if len(native.ch_names) < csd_minimum_channels:
+            results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+                raw=None,
+                status="unavailable",
+                reason=(
+                    f"requires_at_least_{csd_minimum_channels}_channels;"
+                    f"observed_{len(native.ch_names)}"
+                ),
+                metadata={
+                    "branch": NATIVE_CSD_BRANCH,
+                    "position_inventory": position_inventory,
+                },
+            )
+        elif position_inventory["position_fraction"] < csd_minimum_position_fraction:
+            results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+                raw=None,
+                status="unavailable",
+                reason=(
+                    "insufficient_montage_positions;"
+                    f"required_fraction_{csd_minimum_position_fraction};"
+                    f"observed_fraction_{position_inventory['position_fraction']:.6f}"
+                ),
+                metadata={
+                    "branch": NATIVE_CSD_BRANCH,
+                    "position_inventory": position_inventory,
+                },
+            )
+        else:
+            try:
+                csd = mne.preprocessing.compute_current_source_density(native.copy())
+            except SENSITIVITY_PROCESSING_ERRORS as error:
+                results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+                    raw=None,
+                    status="unavailable",
+                    reason=f"{type(error).__name__}: {error}",
+                    metadata={
+                        "branch": NATIVE_CSD_BRANCH,
+                        "position_inventory": position_inventory,
+                    },
+                )
+            else:
+                results[NATIVE_CSD_BRANCH] = SensitivityBranchResult(
+                    raw=csd,
+                    status="available",
+                    reason=None,
+                    metadata={
+                        "branch": NATIVE_CSD_BRANCH,
+                        "transform": "mne.preprocessing.compute_current_source_density",
+                        "input_branch": NATIVE_AVERAGE_REFERENCE_BRANCH,
+                        "position_inventory": position_inventory,
+                    },
+                )
+
+    if not is_sleep_recording:
+        results[SLEEP_HIGHPASS_BRANCH] = SensitivityBranchResult(
+            raw=None,
+            status="not_applicable",
+            reason="unit_modality_not_configured_as_sleep",
+            metadata={
+                "branch": SLEEP_HIGHPASS_BRANCH,
+                "configured_highpass_hz": float(sleep_highpass_hz),
+            },
+        )
+    else:
+        try:
+            sleep, sleep_metadata = preprocess_mne_raw(
+                raw,
+                canonical_channels=canonical_channels,
+                target_sampling_hz=target_sampling_hz,
+                highpass_hz=sleep_highpass_hz,
+                lowpass_hz=lowpass_hz,
+                notch_hz=notch_hz,
+                maximum_interpolation_fraction=maximum_interpolation_fraction,
+                require_complete_canonical=require_complete_canonical,
+            )
+        except SENSITIVITY_PROCESSING_ERRORS as error:
+            results[SLEEP_HIGHPASS_BRANCH] = SensitivityBranchResult(
+                raw=None,
+                status="unavailable",
+                reason=f"{type(error).__name__}: {error}",
+                metadata={
+                    "branch": SLEEP_HIGHPASS_BRANCH,
+                    "configured_highpass_hz": float(sleep_highpass_hz),
+                },
+            )
+        else:
+            results[SLEEP_HIGHPASS_BRANCH] = SensitivityBranchResult(
+                raw=sleep,
+                status="available",
+                reason=None,
+                metadata={
+                    **sleep_metadata,
+                    "branch": SLEEP_HIGHPASS_BRANCH,
+                    "configured_highpass_hz": float(sleep_highpass_hz),
+                    "sleep_identification": "label_free_modality_membership",
+                },
+            )
+    if tuple(results) != SENSITIVITY_BRANCHES:
+        raise RuntimeError("preprocessing sensitivities did not return the fixed branch contract")
+    return {
+        branch: SensitivityBranchResult(
+            raw=result.raw,
+            status=result.status,
+            reason=result.reason,
+            metadata={**result.metadata, "mne_version": mne.__version__},
+        )
+        for branch, result in results.items()
+    }
 
 
 def common_channel_order(

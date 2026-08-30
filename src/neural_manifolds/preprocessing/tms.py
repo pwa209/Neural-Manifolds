@@ -94,6 +94,151 @@ class PerturbationalTrajectory:
     baseline_centroid: np.ndarray
 
 
+@dataclass(frozen=True)
+class EarlyPostPulseBurden:
+    """Trial-by-channel residual burden after the interpolated pulse gap."""
+
+    baseline_rms_uv: np.ndarray
+    early_rms_uv: np.ndarray
+    early_to_baseline_rms_ratio: np.ndarray
+    early_derivative_rms_uv_per_second: np.ndarray
+
+
+def _validate_epoch_grid(
+    epochs: np.ndarray,
+    times_seconds: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    values = np.asarray(epochs, dtype=np.float64)
+    times = np.asarray(times_seconds, dtype=np.float64)
+    if values.ndim != 3 or values.shape[2] != times.size or values.shape[0] < 1:
+        raise ValueError("epochs must be non-empty trials x channels x time")
+    if times.ndim != 1 or times.size < 3 or np.any(np.diff(times) <= 0):
+        raise ValueError("epoch times must be a strictly increasing one-dimensional grid")
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(times)):
+        raise ValueError("TMS epochs and time grid must be finite")
+    return values, times
+
+
+def early_post_pulse_burden(
+    epochs: np.ndarray,
+    times_seconds: np.ndarray,
+    *,
+    baseline: tuple[float, float] = (-0.5, -0.05),
+    early_interval: tuple[float, float] = (0.020, 0.050),
+) -> EarlyPostPulseBurden:
+    """Quantify residual early EEG amplitude/derivative burden without rejection.
+
+    The interval begins at the end of the declared interpolation gap.  The
+    derivative term is deliberately described as a muscle-or-artifact burden,
+    not as proof of a physiological muscle source.  Values are returned for
+    every epoched trial and channel so later rejection remains auditable.
+    """
+
+    values, times = _validate_epoch_grid(epochs, times_seconds)
+    baseline_mask = (times >= baseline[0]) & (times <= baseline[1])
+    early_mask = (times >= early_interval[0]) & (times <= early_interval[1])
+    if np.count_nonzero(baseline_mask) < 2:
+        raise ValueError("TMS burden baseline contains fewer than two samples")
+    if np.count_nonzero(early_mask) < 2:
+        raise ValueError("early post-pulse burden interval contains fewer than two samples")
+    baseline_mean = np.mean(values[:, :, baseline_mask], axis=2, keepdims=True)
+    centred = values - baseline_mean
+    baseline_rms = np.sqrt(np.mean(np.square(centred[:, :, baseline_mask]), axis=2))
+    early_rms = np.sqrt(np.mean(np.square(centred[:, :, early_mask]), axis=2))
+    scale_floor = np.finfo(np.float64).eps
+    ratio = early_rms / np.maximum(baseline_rms, scale_floor)
+    derivative = np.diff(centred, axis=2) / np.diff(times)[None, None, :]
+    derivative_times = (times[:-1] + times[1:]) / 2.0
+    derivative_mask = (derivative_times >= early_interval[0]) & (
+        derivative_times <= early_interval[1]
+    )
+    if np.count_nonzero(derivative_mask) < 1:
+        raise ValueError("early post-pulse derivative interval contains no samples")
+    early_derivative_rms = np.sqrt(np.mean(np.square(derivative[:, :, derivative_mask]), axis=2))
+    return EarlyPostPulseBurden(
+        baseline_rms_uv=baseline_rms * 1e6,
+        early_rms_uv=early_rms * 1e6,
+        early_to_baseline_rms_ratio=ratio,
+        early_derivative_rms_uv_per_second=early_derivative_rms * 1e6,
+    )
+
+
+def conventional_tms_eeg_outcomes(
+    epochs: np.ndarray,
+    times_seconds: np.ndarray,
+    *,
+    baseline: tuple[float, float] = (-0.5, -0.05),
+    post_interval: tuple[float, float] = (0.020, 0.300),
+    activation_threshold_mad: float = 3.0,
+) -> dict[str, float | str]:
+    """Compute deterministic TEP/GFP and sensor-spread comparators.
+
+    Global field power is the across-sensor population standard deviation of
+    the trial-averaged, baseline-corrected TEP.  Sensor activation uses a
+    channel-specific median + MAD threshold estimated only from the baseline.
+    Latency outcomes describe sensor-level temporal spread and are not claimed
+    as source-space or causal propagation.
+    """
+
+    values, times = _validate_epoch_grid(epochs, times_seconds)
+    if activation_threshold_mad <= 0:
+        raise ValueError("sensor activation threshold multiplier must be positive")
+    baseline_mask = (times >= baseline[0]) & (times <= baseline[1])
+    post_mask = (times >= post_interval[0]) & (times <= post_interval[1])
+    if np.count_nonzero(baseline_mask) < 2 or np.count_nonzero(post_mask) < 2:
+        raise ValueError("TEP baseline and post-pulse intervals each need at least two samples")
+    baseline_mean = np.mean(values[:, :, baseline_mask], axis=2, keepdims=True)
+    centred = values - baseline_mean
+    mean_tep = np.mean(centred, axis=0)
+    global_field_power = np.std(mean_tep, axis=0, ddof=0)
+    post_times = times[post_mask]
+    post_gfp = global_field_power[post_mask]
+
+    baseline_absolute = np.abs(centred[:, :, baseline_mask])
+    baseline_median = np.median(baseline_absolute, axis=(0, 2))
+    baseline_mad = 1.4826 * np.median(
+        np.abs(baseline_absolute - baseline_median[None, :, None]), axis=(0, 2)
+    )
+    baseline_fallback = np.std(baseline_absolute, axis=(0, 2), ddof=0)
+    baseline_scale = np.where(
+        baseline_mad > np.finfo(np.float64).eps,
+        baseline_mad,
+        baseline_fallback,
+    )
+    thresholds = baseline_median + activation_threshold_mad * np.maximum(
+        baseline_scale, np.finfo(np.float64).eps
+    )
+    post_absolute_tep = np.abs(mean_tep[:, post_mask])
+    crossings = post_absolute_tep > thresholds[:, None]
+    active = np.any(crossings, axis=1)
+    first_latency = np.full(mean_tep.shape[0], np.nan, dtype=np.float64)
+    for channel_index in np.flatnonzero(active):
+        first_latency[channel_index] = post_times[np.flatnonzero(crossings[channel_index])[0]]
+    available_latencies = first_latency[np.isfinite(first_latency)]
+    if available_latencies.size >= 2:
+        latency_range = float(np.ptp(available_latencies))
+        latency_iqr = float(
+            np.percentile(available_latencies, 75) - np.percentile(available_latencies, 25)
+        )
+        propagation_status = "available_sensor_level_temporal_spread"
+    else:
+        latency_range = float("nan")
+        latency_iqr = float("nan")
+        propagation_status = "unavailable_fewer_than_two_threshold_crossing_sensors"
+    peak_index = int(np.argmax(post_gfp))
+    return {
+        "tep_peak_global_field_power_uv": float(post_gfp[peak_index] * 1e6),
+        "tep_peak_global_field_power_latency_seconds": float(post_times[peak_index]),
+        "tep_mean_global_field_power_uv": float(np.mean(post_gfp) * 1e6),
+        "tep_global_field_power_auc_uv_seconds": float(np.trapezoid(post_gfp, post_times) * 1e6),
+        "tep_mean_absolute_amplitude_uv": float(np.mean(post_absolute_tep) * 1e6),
+        "sensor_spread_fraction": float(np.mean(active)),
+        "sensor_propagation_latency_range_seconds": latency_range,
+        "sensor_propagation_latency_iqr_seconds": latency_iqr,
+        "sensor_propagation_status": propagation_status,
+    }
+
+
 def fit_shared_perturbational_trajectories(
     conditions: Mapping[str, np.ndarray],
     times_seconds: np.ndarray,

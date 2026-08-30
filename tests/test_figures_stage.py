@@ -106,16 +106,28 @@ def _write_inputs(root: Path) -> dict[str, Path]:
     tms.mkdir()
     tms_rows = []
     trajectory_rows = []
-    for condition_index, condition in enumerate(("wake", "sedation")):
+    for condition_index, condition in enumerate(("awake", "propofol_sedation")):
         for participant_index in range(4):
-            passive = 0.35 + 0.16 * participant_index - 0.15 * condition_index
+            passive_delta = 0.12 + 0.03 * participant_index
+            direct_delta = 0.18 + 0.04 * participant_index
+            passive_sedation = 0.2 + 0.1 * participant_index
+            direct_sedation = 0.25 + 0.08 * participant_index
+            if condition == "awake":
+                passive = passive_sedation + passive_delta
+                direct = direct_sedation + direct_delta
+            else:
+                passive = passive_sedation
+                direct = direct_sedation
             tms_rows.append(
                 {
                     "participant_id": f"p{participant_index}",
                     "dataset_id": "dsA",
                     "condition": condition,
                     "passive_reachability": passive,
-                    "direct_response": 0.25 + 0.72 * passive + 0.02 * participant_index,
+                    "direct_response": direct,
+                    "passive_delta": passive_delta,
+                    "direct_delta": direct_delta,
+                    "tms_contrast": "awake_minus_propofol_sedation",
                     "source_artifact_sha256": "4" * 64,
                 }
             )
@@ -144,7 +156,9 @@ def _write_inputs(root: Path) -> dict[str, Path]:
                 "dataset_id": "docA" if participant_index % 2 == 0 else "docB",
                 "diagnosis": diagnosis,
                 "crs_r_total": 4 + participant_index * 2,
-                "regime_preservation_score": -0.5 + participant_index * 0.22,
+                "wake_regime_log_likelihood_ratio": -0.5 + participant_index * 0.22,
+                "wake_regime_score_status": ("available_frozen_healthy_wake_vs_propofol_reference"),
+                "crs_r_status": "available",
                 **{
                     axis: -0.7 + participant_index * 0.18 + axis_index * 0.07
                     for axis_index, axis in enumerate(AXES)
@@ -223,6 +237,19 @@ def test_run_figures_exports_auditable_submission_bundle(tmp_path: Path) -> None
             source = pd.read_csv(source_path)
             assert "source_artifact_sha256" in source.columns
             assert "source_table_sha256" in source.columns
+
+    tms_delta_source = pd.read_csv(result.source_data_paths["figure_4"]["a"])
+    assert len(tms_delta_source) == 4
+    assert set(tms_delta_source["association_test"]) == {
+        "spearman_participant_level_condition_delta"
+    }
+    assert set(tms_delta_source["tms_contrast"]) == {"awake_minus_propofol_sedation"}
+    assert tms_delta_source["spearman_rho"].iloc[0] == pytest.approx(1.0)
+
+    clinical_association_source = pd.read_csv(result.source_data_paths["figure_6"]["b"])
+    assert set(clinical_association_source["association_test"]) == {"spearman_participant_level"}
+    assert clinical_association_source["spearman_rho"].iloc[0] == pytest.approx(1.0)
+    assert set(clinical_association_source["n_association"]) == {6}
 
     manifest_hash = sha256_file(result.manifest_path)
     recovered = run_figures(

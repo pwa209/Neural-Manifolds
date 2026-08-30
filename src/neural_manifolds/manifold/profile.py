@@ -33,9 +33,14 @@ AXIS_NAMES = ("repertoire", "metastability", "directionality", "alignment", "rea
 class ManifoldRecord:
     """Inputs required to estimate one participant-condition regime profile."""
 
+    # ``trajectory`` is the discovery-fitted dynamics projection used for local
+    # dynamics and state-dependent axes. ``repertoire_trajectory`` retains the
+    # untruncated frozen-encoder embedding for R. Standalone callers may omit the
+    # latter, in which case the same trajectory is used for both spaces.
     trajectory: ArrayLike
     states: ArrayLike
     regional_trajectories: Mapping[str, ArrayLike]
+    repertoire_trajectory: ArrayLike | None = None
     segment_ids: ArrayLike | None = None
     alignment_segment_ids: ArrayLike | None = None
     local_dynamics: LocalLinearDynamics | None = None
@@ -118,6 +123,7 @@ def _coerce_record(record: ManifoldRecord | Mapping[str, Any]) -> ManifoldRecord
         trajectory=record["trajectory"],
         states=record["states"],
         regional_trajectories=record["regional_trajectories"],
+        repertoire_trajectory=record.get("repertoire_trajectory"),
         segment_ids=record.get("segment_ids"),
         alignment_segment_ids=record.get("alignment_segment_ids"),
         local_dynamics=record.get("local_dynamics"),
@@ -184,9 +190,69 @@ class FiveAxisProfileEstimator(EstimatorMixin):
         self.metastability_covariance_shrinkage = metastability_covariance_shrinkage
         self.standardization = standardization
 
+    @staticmethod
+    def _input_dimensions(record: ManifoldRecord) -> tuple[int, int]:
+        dynamics = np.asarray(record.trajectory)
+        repertoire = np.asarray(
+            record.trajectory
+            if record.repertoire_trajectory is None
+            else record.repertoire_trajectory
+        )
+        if dynamics.ndim != 2 or repertoire.ndim != 2:
+            raise ValueError("repertoire and dynamics trajectories must be two-dimensional")
+        if dynamics.shape[0] != repertoire.shape[0]:
+            raise ValueError("repertoire and dynamics trajectories must share temporal rows")
+        return int(repertoire.shape[1]), int(dynamics.shape[1])
+
+    def _validate_input_dimensions(self, record: ManifoldRecord) -> None:
+        source_dimension, dynamics_dimension = self._input_dimensions(record)
+        if hasattr(self, "repertoire_source_dimension_") and (
+            source_dimension != self.repertoire_source_dimension_
+        ):
+            raise ValueError(
+                f"repertoire trajectory has {source_dimension} features; expected "
+                f"{self.repertoire_source_dimension_}"
+            )
+        if hasattr(self, "dynamics_projection_dimension_") and (
+            dynamics_dimension != self.dynamics_projection_dimension_
+        ):
+            raise ValueError(
+                f"dynamics trajectory has {dynamics_dimension} features; expected "
+                f"{self.dynamics_projection_dimension_}"
+            )
+
+    def input_space_audit(self) -> dict[str, Any]:
+        """Describe the two serialized input spaces used by the fitted profile."""
+
+        require_fitted(
+            self,
+            "repertoire_source_dimension_",
+            "dynamics_projection_dimension_",
+        )
+        return {
+            "repertoire": {
+                "record_field": "repertoire_trajectory",
+                "space": "untruncated_frozen_encoder_embedding",
+                "dimension": int(self.repertoire_source_dimension_),
+                "discovery_projection_applied": False,
+            },
+            "dynamics": {
+                "record_field": "trajectory",
+                "space": "discovery_fitted_pca_projection",
+                "dimension": int(self.dynamics_projection_dimension_),
+                "discovery_projection_applied": True,
+            },
+        }
+
     def _estimate_details(self, record: ManifoldRecord) -> ManifoldProfileDetails:
+        self._validate_input_dimensions(record)
+        repertoire_trajectory = (
+            record.trajectory
+            if record.repertoire_trajectory is None
+            else record.repertoire_trajectory
+        )
         repertoire = estimate_repertoire(
-            record.trajectory,
+            repertoire_trajectory,
             shrinkage=self.repertoire_shrinkage,
             noise_variance=self.repertoire_noise_variance,
         )
@@ -273,6 +339,13 @@ class FiveAxisProfileEstimator(EstimatorMixin):
             raise ValueError("at least two healthy discovery records are required")
         if self.standardization not in {"zscore", "robust", "none"}:
             raise ValueError("standardization must be 'zscore', 'robust', or 'none'")
+        dimensions = [self._input_dimensions(record) for record in reference_records]
+        source_dimensions = {source for source, _ in dimensions}
+        dynamics_dimensions = {dynamics for _, dynamics in dimensions}
+        if len(source_dimensions) != 1 or len(dynamics_dimensions) != 1:
+            raise ValueError("healthy discovery records use inconsistent input dimensions")
+        self.repertoire_source_dimension_ = source_dimensions.pop()
+        self.dynamics_projection_dimension_ = dynamics_dimensions.pop()
         details = [self._estimate_details(record) for record in reference_records]
         self.metastability_reference_ = MetastabilityReference(
             covariance_shrinkage=self.metastability_covariance_shrinkage
@@ -303,7 +376,14 @@ class FiveAxisProfileEstimator(EstimatorMixin):
         self,
         records: ManifoldRecord | Mapping[str, Any] | Sequence[ManifoldRecord | Mapping[str, Any]],
     ) -> NDArray[np.float64]:
-        require_fitted(self, "metastability_reference_", "axis_center_", "axis_scale_")
+        require_fitted(
+            self,
+            "metastability_reference_",
+            "axis_center_",
+            "axis_scale_",
+            "repertoire_source_dimension_",
+            "dynamics_projection_dimension_",
+        )
         output = []
         for record in _coerce_records(records):
             details = self._estimate_details(record)
@@ -323,7 +403,14 @@ class FiveAxisProfileEstimator(EstimatorMixin):
     def profile(self, record: ManifoldRecord | Mapping[str, Any]) -> ManifoldProfile:
         """Return axes together with all unstandardised component summaries."""
 
-        require_fitted(self, "metastability_reference_", "axis_center_", "axis_scale_")
+        require_fitted(
+            self,
+            "metastability_reference_",
+            "axis_center_",
+            "axis_scale_",
+            "repertoire_source_dimension_",
+            "dynamics_projection_dimension_",
+        )
         coerced = _coerce_record(record)
         details = self._estimate_details(coerced)
         raw = self._raw_values(details)

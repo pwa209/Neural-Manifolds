@@ -34,6 +34,10 @@ from neural_manifolds.manifold.alignment import pairwise_module_alignment
 from neural_manifolds.manifold.directionality import estimate_directionality
 from neural_manifolds.manifold.repertoire import estimate_repertoire
 from neural_manifolds.provenance import atomic_write_json, sha256_file
+from neural_manifolds.stages.fmri_statistics import (
+    collapse_runs_within_participant_condition,
+    infer_paired_condition_contrasts,
+)
 
 
 class BrainLMBackend(Protocol):
@@ -124,6 +128,17 @@ def _atomic_npy(destination: Path, values: np.ndarray) -> Path:
         temporary.unlink(missing_ok=True)
         raise
     return destination
+
+
+def _artifact(path: Path) -> dict[str, Any]:
+    resolved = path.resolve(strict=True)
+    if path.is_symlink() or not resolved.is_file():
+        raise FMRIManifestError(f"fMRI artifact is not a regular file: {path}")
+    return {
+        "path": str(resolved),
+        "sha256": sha256_file(resolved),
+        "size": resolved.stat().st_size,
+    }
 
 
 def _present(value: object) -> bool:
@@ -462,39 +477,59 @@ def _segment(values: np.ndarray, row: Mapping[str, Any]) -> tuple[np.ndarray, in
     return values[start:stop], start, stop
 
 
-def _calibrate_secondary_axes(
-    participant: pd.DataFrame,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Map fMRI-compatible summaries onto discovery-calibrated R/M/D/A axes."""
-
+def _secondary_axis_sources(frame: pd.DataFrame) -> dict[str, np.ndarray]:
     required = {
-        "partition",
         "brainlm_repertoire_effective_rank",
         "transition_occupancy_entropy_normalized",
         "transition_switching_fraction",
         "transition_entropy_production_rate",
         "alignment_shared_predictive_variance",
     }
-    missing = required.difference(participant.columns)
+    missing = required.difference(frame.columns)
     if missing:
         raise FMRIManifestError(f"fMRI summaries cannot form R/M/D/A: missing {sorted(missing)}")
-    output = participant.copy()
-    raw = {
-        "R": np.log1p(output["brainlm_repertoire_effective_rank"].to_numpy(dtype=float)),
+    return {
+        "R": np.log1p(frame["brainlm_repertoire_effective_rank"].to_numpy(dtype=float)),
         "M": np.mean(
             np.column_stack(
                 [
-                    output["transition_occupancy_entropy_normalized"].to_numpy(dtype=float),
-                    output["transition_switching_fraction"].to_numpy(dtype=float),
+                    frame["transition_occupancy_entropy_normalized"].to_numpy(dtype=float),
+                    frame["transition_switching_fraction"].to_numpy(dtype=float),
                 ]
             ),
             axis=1,
         ),
-        "D": output["transition_entropy_production_rate"].to_numpy(dtype=float),
-        "A": output["alignment_shared_predictive_variance"].to_numpy(dtype=float),
+        "D": frame["transition_entropy_production_rate"].to_numpy(dtype=float),
+        "A": frame["alignment_shared_predictive_variance"].to_numpy(dtype=float),
     }
-    discovery = output["partition"].astype(str).eq("discovery").to_numpy()
-    if np.count_nonzero(discovery) < 2:
+
+
+def _calibrate_secondary_axes(
+    participant: pd.DataFrame,
+    *,
+    calibration_units: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Map fMRI-compatible summaries onto discovery-calibrated R/M/D/A axes."""
+
+    required = {
+        "participant_id",
+        "partition",
+    }
+    missing = required.difference(participant.columns)
+    if missing:
+        raise FMRIManifestError(f"fMRI summaries cannot form R/M/D/A: missing {sorted(missing)}")
+    calibration_required = {"participant_id", "partition"}
+    calibration_missing = calibration_required.difference(calibration_units.columns)
+    if calibration_missing:
+        raise FMRIManifestError(f"fMRI calibration units are missing {sorted(calibration_missing)}")
+    output = participant.copy()
+    raw = _secondary_axis_sources(output)
+    calibration_raw = _secondary_axis_sources(calibration_units)
+    discovery = calibration_units["partition"].astype(str).eq("discovery").to_numpy()
+    discovery_participants = sorted(
+        set(calibration_units.loc[discovery, "participant_id"].astype(str))
+    )
+    if len(discovery_participants) < 2:
         raise FMRIManifestError("R/M/D/A calibration requires two discovery participants")
     audit: dict[str, Any] = {}
     sources = {
@@ -506,7 +541,18 @@ def _calibrate_secondary_axes(
     for axis, values in raw.items():
         if not np.all(np.isfinite(values)):
             raise FMRIManifestError(f"fMRI {axis} source contains non-finite values")
-        fit = values[discovery]
+        calibration_values = calibration_raw[axis]
+        if not np.all(np.isfinite(calibration_values)):
+            raise FMRIManifestError(f"fMRI {axis} calibration source contains non-finite values")
+        fit_frame = pd.DataFrame(
+            {
+                "participant_id": calibration_units.loc[discovery, "participant_id"]
+                .astype(str)
+                .to_numpy(),
+                "value": calibration_values[discovery],
+            }
+        )
+        fit = fit_frame.groupby("participant_id", sort=True)["value"].mean().to_numpy(dtype=float)
         center = float(np.mean(fit))
         observed_scale = float(np.std(fit, ddof=1))
         degenerate = bool(observed_scale <= np.finfo(float).eps)
@@ -515,6 +561,9 @@ def _calibrate_secondary_axes(
         output[axis] = (values - center) / scale
         audit[axis] = {
             "source": sources[axis],
+            "fit_unit": "discovery_participant_mean_across_label_free_unit_summaries",
+            "fit_participants": discovery_participants,
+            "condition_labels_used_for_fit": False,
             "center": center,
             "scale": scale,
             "observed_discovery_scale": observed_scale,
@@ -531,7 +580,7 @@ def run_fmri_triangulation(
     encoder: BrainLMBackend,
     study: StudyConfig,
     atlas_path: str | Path | None = None,
-) -> tuple[Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     """Encode ds006623 units and write participant-safe secondary summaries."""
 
     source_manifest = Path(manifest_path).resolve(strict=True)
@@ -639,10 +688,16 @@ def run_fmri_triangulation(
             "effect_site_concentration_mean",
             "effect_site_concentration_max",
             "metadata_status",
+            "healthy_wake_reference",
+            "timing_index_origin",
+            "lor_tr_csv",
+            "ror_tr_csv",
+            "lor_volume",
+            "ror_volume",
         )
         if column in frame
     ]
-    for index, row in enumerate(frame.to_dict(orient="records")):
+    for row in frame.to_dict(orient="records"):
         unit_id = str(row["unit_id"])
         try:
             run_values = cache[row_runs[unit_id]]
@@ -688,7 +743,12 @@ def run_fmri_triangulation(
                         segment,
                         coordinates,
                         tr_seconds=float(row["tr_seconds"]),
-                        random_state=study.random_seeds[index % len(study.random_seeds)],
+                        random_state=int.from_bytes(
+                            hashlib.sha256(f"{study.random_seeds[0]}:{unit_id}".encode()).digest()[
+                                :4
+                            ],
+                            "big",
+                        ),
                     ),
                 }
             )
@@ -702,20 +762,53 @@ def run_fmri_triangulation(
     )
     summaries = pd.DataFrame(summary_rows)
     summaries_path = _atomic_parquet(summaries, destination / "fmri-unit-summaries.parquet")
-    grouping = ["participant_id", "dataset_id", "partition"]
-    if "condition" in summaries:
-        grouping.append("condition")
     metric_columns = [
         column
         for column in summaries.columns
         if column.startswith(("brainlm_", "transition_", "alignment_", "fmri_"))
         and pd.api.types.is_numeric_dtype(summaries[column])
     ]
-    participant = summaries.groupby(grouping, as_index=False)[metric_columns].mean()
-    participant, axis_calibration = _calibrate_secondary_axes(participant)
+    participant = collapse_runs_within_participant_condition(
+        summaries,
+        metric_columns=metric_columns,
+    )
+    participant, axis_calibration = _calibrate_secondary_axes(
+        participant,
+        calibration_units=summaries,
+    )
     participant_path = _atomic_parquet(
         participant, destination / "fmri-participant-summaries.parquet"
     )
+    inference = infer_paired_condition_contrasts(
+        participant,
+        bootstrap_repetitions=study.statistics.participant_bootstrap_repetitions,
+        permutation_repetitions=study.statistics.permutation_repetitions,
+        random_seed=study.random_seeds[0],
+    )
+    paired_path = _atomic_parquet(
+        inference.paired_differences,
+        destination / "fmri-participant-paired-differences.parquet",
+    )
+    inference_path = _atomic_parquet(
+        inference.estimates,
+        destination / "fmri-participant-condition-inference.parquet",
+    )
+    inference_ledger_path = destination / "fmri-inference-ledger.json"
+    inference_ledger = {
+        **inference.ledger,
+        "study_sha256": config_sha256(study),
+        "inputs": {
+            "strict_fmri_manifest": _artifact(source_manifest),
+            "unit_summaries": _artifact(summaries_path),
+            "participant_condition_summaries": _artifact(participant_path),
+        },
+        "outputs": {
+            "paired_differences": _artifact(paired_path),
+            "condition_inference": _artifact(inference_path),
+        },
+        "secondary_axis_calibration": axis_calibration,
+    }
+    atomic_write_json(inference_ledger_path, inference_ledger)
     partition_sets = {
         name: sorted(set(group["participant_id"].astype(str)))
         for name, group in frame.groupby("partition")
@@ -751,6 +844,25 @@ def run_fmri_triangulation(
                 "fit_partition": "discovery",
                 "calibration": axis_calibration,
             },
+            "participant_condition_inference": {
+                "ledger": _artifact(inference_ledger_path),
+                "participant_condition_summaries": _artifact(participant_path),
+                "paired_differences": _artifact(paired_path),
+                "estimates": _artifact(inference_path),
+                "inference_unit": "participant",
+                "runs_collapsed_within_participant_condition": True,
+                "partitions_analyzed_separately": True,
+                "pooled_cross_partition_inference": False,
+                "labels_consumed_only_after_frozen_encoding": True,
+                "encoder_label_fields_consumed": [],
+                "status_counts": inference.ledger["status_counts"],
+                "issue_count": len(inference.ledger["issues"]),
+            },
+            "cross_modal_evidence": {
+                "relationship": "independent_cohort_triangulation",
+                "verified_participant_mapping": None,
+                "participant_level_eeg_fmri_correlation_performed": False,
+            },
             "partition_participants": partition_sets,
             "partition_overlaps": overlaps,
             "run_provenance": list(run_provenance.values()),
@@ -766,4 +878,12 @@ def run_fmri_triangulation(
             "scientific_gate_applied": False,
         },
     )
-    return encoded_path, summaries_path, participant_path, audit_path
+    return (
+        encoded_path,
+        summaries_path,
+        participant_path,
+        paired_path,
+        inference_path,
+        inference_ledger_path,
+        audit_path,
+    )

@@ -17,11 +17,10 @@ analyses after results are seen.
 
 ## Current deployment boundary
 
-The compute endpoint has been read-only preflighted as
+As of 30 August 2026, the compute endpoint has been verified as
 `wangpeng@kemove-Rack-Server` through local SSH port `1022`. It has an NVIDIA H100
 80-GB GPU, `tmux`, and `rsync`, but no detected Slurm installation. The three
-project-specific roots have now been confirmed and recorded in
-`configs/server.yaml`:
+project-specific roots have been confirmed and recorded in `configs/server.yaml`:
 
 | Role | Confirmed root | Purpose |
 |---|---|---|
@@ -32,6 +31,19 @@ project-specific roots have now been confirmed and recorded in
 Each root is one direct, project-specific child of its parent. Scripts reject the
 parent itself, nested guesses, relative paths, and a root copied from another
 project. Pass these exact configured values explicitly to every remote script.
+
+The server is currently running the audit/acquisition-safe commit
+`9c3ccf71cf474bb1fb00b62318cb5be200f379be`. Because the private GitHub repository
+was not directly usable from the server, that exact pushed commit was deployed via
+an independently SHA-256-verified, unprefixed `git archive`; the embedded commit and
+the complete deployed-source inventory were reverified on the server. The pinned
+Python 3.11/CUDA 12.6 runtime passed an H100 tensor smoke test. Audit completed and
+direct-to-NAS acquisition is running under the durable run ID
+`acq-20260830-9c3ccf7`. Later scientific phases are intentionally not queued from
+that commit. The scientific-validity corrections described in `STATUS.md` have
+passed local verification and are being frozen into a new exact pushed commit and
+run ID for those phases; verified raw releases can then be revalidated and reused
+without copying raw data through GitHub or the workstation.
 
 ## Reproducible storage contract
 
@@ -67,8 +79,10 @@ dataset downloader writes partial files beside the final NAS target, verifies th
 release inventory, then atomically publishes the final release directory. Raw
 release files become read-only after their complete manifest validates. Derived
 data stay on `/data1`; only small durable queue records and logs go to `/data2`.
-No raw data, model cache, participant-level sensitive arrays, or credentials enter
-GitHub.
+GitHub contains only code, configuration, tests, checksum metadata, roadmap, and
+operational status. No empirical raw or derived data, participant-level outputs,
+aggregate analysis tables, figure source-data tables, model caches, durable logs,
+or credentials enter GitHub.
 
 ## Phase graph
 
@@ -87,13 +101,13 @@ a scientific gate.
 |---:|---|---|---|---|
 | 1 | `audit` | `audit` | NAS + work | release/licence/pretraining-overlap audit and hashed inventory |
 | 2 | `acquire` | `acquire` | NAS only | immutable release manifests with verified file hashes |
-| 3 | `qc` | `qc` | work | recording flow table, metadata validation, blind exclusion log |
-| 4 | `preprocess` | `preprocess` | work | harmonised/native windows and participant-condition inventory |
-| 5 | `encode` | `encode` | work/GPU | frozen LaBraM embeddings, representation and label-leakage receipts |
-| 6 | `metrics` | `metrics` | work/CPU+GPU | five-axis metrics, benchmarks, nulls, seed/reliability summaries |
+| 3 | `qc` | `qc` | work | full label-free physical inventory and healthy-only signal-QC flow |
+| 4 | `preprocess` | `preprocess` | work | primary/native/CSD/sleep derivatives, selectors, availability, and receipts |
+| 5 | `encode` | `encode` | work/GPU | deterministic windows, frozen LaBraM embeddings, and label-leakage receipts |
+| 6 | `metrics` | `metrics` | work/CPU+GPU | five-axis metrics, benchmarks, representation controls, nulls, and sampling summaries |
 | 7 | `models` | `models` | work/CPU | participant-level contrasts, held-out predictions, uncertainty and ablations |
 | 8 | `tms` | `tms` | work/CPU+GPU | passive/direct reachability comparison and post-pulse dynamics |
-| 9 | `locked-clinical` | `clinical` | work/GPU | post-lock parsing, preprocessing, encoding, and frozen transfer for both DoC resources |
+| 9 | `locked-clinical` | `clinical` | work/GPU | post-lock clinical signal QC, parsing, preprocessing, encoding, and frozen transfer |
 | 10 | `fmri` | `fmri` | work/GPU | strict-manifest secondary BrainLM propofol-fMRI triangulation |
 | 11 | `figures` | `figures` | work | final healthy, perturbational, clinical, and fMRI figures/source data |
 
@@ -138,7 +152,7 @@ Acquire the fixed public releases listed in the study catalogue:
 
 Each adapter must support `--check-only`, `--dry-run`, bounded retries, partial-file
 resume, immutable release names, and a final checksum inventory. Download into
-`CANONICAL/raw/<dataset>/.partial-<release>` and publish
+`CANONICAL/raw/.staging/<dataset>/<release>` and publish
 `CANONICAL/raw/<dataset>/<release>` only after validation. Never copy raw files to
 the Git repository, workstation, `/data1`, or `/data2`. Capture repository-native
 metadata before any conversion. A failed transfer is resumed from its partial
@@ -150,11 +164,27 @@ licence-incompatible material is reported and left untouched rather than bypasse
 
 ### 3. Metadata and signal QC
 
-Build one recording-level catalogue covering participants, sessions, conditions,
-modalities, channel names/positions, reference, sampling rate, duration/trials,
-events, artefact burden, label availability, and missing covariates. Validate BIDS
-where present and preserve native metadata elsewhere. Make exclusions blind to the
-contrast outcome whenever file organization permits.
+Build one label-free, recording-level physical-file catalogue across healthy and
+clinical releases, covering participants, sessions, task/acquisition identifiers,
+modalities, source members, and sidecar availability. Before the technical clinical
+lock, signal-level QC opens only the healthy inventory subset; clinical recordings
+remain file-inventoried but unopened. Condition/outcome values remain in the separate
+cohort label view. Validate BIDS where present and preserve native metadata elsewhere.
+Make every QC exclusion blind to the contrast outcome.
+
+The implemented signal-QC reader accepts only a scoped label-free inventory and
+rejects condition, diagnosis, target, and outcome fields before opening signal. For
+every readable recording it hashes all physical source members (including BrainVision
+header, marker, and binary signal companions and external EEGLAB data), then records
+deterministic evenly spaced signal samples, channel/montage/reference metadata,
+auxiliary EOG/ECG/EMG availability, event-onset integrity, sidecar status, bad-channel
+diagnostics, and artefact-window burden. Event TSV handling reads the header first and
+then materialises only `onset` and, when present, `duration`; trial type, response,
+condition, and outcome values never enter the QC process. Review flags are retained
+but are not exclusions. Only unreadable, non-finite, empty/too-short, or non-EEG inputs
+receive a technical exclusion, with the reason written to the flow table. The
+preprocessing receipts bind the exact scoped inventory and QC-flow hashes, and no
+condition/outcome value is consumed or reproduced by QC.
 
 Implement the study's minimum-duration/trial/channel/window rules, flatline and
 clipping checks, event synchronization checks, montage recoverability, and
@@ -166,17 +196,48 @@ are precision metadata, not independent sample sizes.
 
 Create both the 19-channel harmonised EEG track and native/full-montage sensitivity
 track. Apply resampling, filtering/notch choice, reference and CSD variants, bad
-channel/interpolation rules, artefact rejection, event locking, sleep-stage
-restriction, and TMS pulse handling exactly from configuration. Preserve masks so
-zero padding never becomes signal. Preprocessing preserves the ordered segments and
-fine/coarse time tracks needed by the post-encoding equal-window and reliability
-stage; it does not use condition labels to fit a signal transform.
+channel/interpolation rules, and configured branch selection without using condition
+labels to fit a signal transform. Direct-TMS recordings are rejected from this
+generic path: pulse-gap interpolation, epoching, and post-pulse processing occur only
+inside the dedicated `tms` stage. Deterministic windows, masks, and artifact-window
+rejection are generated during `encode`, which preserves segment boundaries so zero
+padding and rejected gaps never become signal.
 
-The integrated stage writes label-free, preprocessed signal objects plus analysis-
-unit and flow manifests on fast work storage. The manifests retain shape, channel,
-mask/window, preprocessing-hash, and raw-input checksum lineage; labels remain in a
-separate manifest until after encoding. Synthetic and small smoke datasets establish
-technical correctness, not favourable method selection.
+The production implementation now materialises the configured canonical 19-channel,
+average-referenced branch as the healthy primary input. Missing and signal-bad
+canonical electrodes count together against the configured interpolation fraction;
+when the complete harmonised montage is required, they are reconstructed only from
+the fixed standard 10-20 coordinates and the final ordered channel list is checked
+exactly. The sparse clinical PSG branch remains a declared exception: it retains
+only observed electrodes and permits no interpolation.
+
+Each source and selected analysis unit also receives a separately hashed
+native/full-montage average-reference sensitivity whenever the signal and channel
+metadata permit it. A CSD derivative is emitted only when the configured channel
+count and electrode-position fraction are met and MNE completes the transform. A
+missing or invalid montage makes CSD explicitly unavailable with a per-unit reason;
+it never excludes the primary average-reference derivative. Label-free `psg`
+modality membership auditably activates the configured 0.3-Hz high-pass sensitivity,
+while other modalities record that branch as not applicable. Auxiliary EOG, ECG,
+and EMG inventories and potential EOG/ECG support are preserved, but the fixed
+generic policy reports ICA as not performed and records that auxiliary channels were
+not used for cleaning. It therefore cannot silently convert channel availability
+into a claim that ICA occurred.
+
+The integrated stage writes label-free preprocessed FIF derivatives plus selector,
+flow, branch-availability, and receipt manifests on fast work storage. The manifests
+retain selector, branch, shape, channel, preprocessing-hash, and raw-input checksum
+lineage; labels remain in a separate manifest until after encoding. Synthetic and
+small smoke datasets establish technical correctness, not favourable method
+selection.
+
+Primary, native-average, native-CSD, and sleep-high-pass files each have an atomic
+content receipt binding the complete physical recording inventory, QC-flow hash,
+selector, analysis branch, sleep-modality decision, and full preprocessing
+configuration hash. Reuse recursively rehashes every available derivative and its
+receipt; a changed source companion, configuration, selector, QC decision, branch
+status, derivative, or receipt requires a new run directory. Availability counts and
+reasons are descriptive execution records only and never scientific result gates.
 
 ### 5. Frozen representation
 
@@ -186,10 +247,24 @@ participant/session/condition trajectories in deterministic chunks. Capture CUDA
 driver, PyTorch, model commit/hash, selected layer, pooling rule, montage, seed, and
 input/output shapes. Resume at participant chunks; never recompute validated chunks.
 
-Run PCA/time-frequency controls and configured LaBraM layer/size sensitivities as
-separate provenance branches. Representation fitting, scaling, and dimensionality
-reduction for any downstream prediction must occur inside participant-level training
-folds. Dataset-identity decodability is reported as a confound diagnostic.
+The metrics phase publishes a representation-control availability ledger before any
+control is described as an empirical trajectory. The current exact, rehashed branch is
+the configured LaBraM-Base final-pre-head/valid-token pooling trajectory. Secondary
+pooling, non-primary layers, alternate checkpoint sizes, PCA coordinates, and full
+time-frequency coordinates remain explicitly unavailable/not generated until an exact
+hash-pinned checkpoint and extraction backend is configured and materialised; scalar
+spectral, complexity, connectivity, and wSMI benchmarks are referenced as implemented
+comparators but are not relabelled coordinate trajectories.
+
+Dataset-identity decodability is a non-gating confound diagnostic over
+participant-condition five-axis cells and the exact complete conventional-benchmark
+cells that map back to them. Every fold is participant-separated; median imputation,
+scaling, participant/class weighting, and the fixed logistic classifier are fitted only
+on training participants. Reports retain balanced accuracy and AUROC only where
+defined, participant-cluster bootstrap intervals, participant-label permutation nulls
+with plus-one p-values, fold-level disjointness hashes, and structured unavailable
+reasons. Participant identifiers, row predictions, raw signals, and coordinate arrays
+are not published by this diagnostic.
 
 The healthy-reference split is participant-disjoint: discovery fits the frozen
 state/profile objects, validation selects technical state stability, and a third
@@ -213,10 +288,20 @@ model-free recurrence replication;
    later anchored to TMS.
 
 Implemented conventional comparators are relative spectral power, spectral slope,
-permutation entropy, Lempel-Ziv complexity, and connectivity summaries. Weighted
-symbolic mutual information, microstates, and PCIst remain explicit unavailable
-placeholders until validated backends are supplied; they are never silently replaced
-by another measure. Current technical null machinery records phase randomization,
+permutation entropy, Lempel-Ziv complexity, connectivity summaries, and deterministic
+weighted symbolic mutual information. The wSMI implementation fixes ordinal order
+three, a 32 ms lag, a 10 Hz zero-phase low-pass, zero weights for identical and
+sign-reversed symbols, at least 180 complete symbols, and the median across unique
+channel pairs; every row records the realized lag, sample count, pair count, and
+availability reason. Microstate prototypes are fit without condition labels only on
+representation-discovery participants, with participant-balanced GFP-peak maps and a
+fixed channel order, then frozen for validation/evaluation application. Missing split,
+channel, or finite-sample prerequisites produce a structured unavailable status, never
+per-condition clustering. PCIst remains explicitly unavailable until a validated
+backend is supplied. The benchmark ledger retains every manifest unit and hashes each
+expected participant-condition cell; a conventional prediction is unavailable unless
+its eligible cell-key set exactly equals the corresponding five-axis estimand. Current
+technical null machinery records phase randomization,
 blockwise temporal permutation, post-encoder latent rotation, and covariance/dwell-
 matched state-space simulations with per-repeat error auditing, alongside the separate
 true pre-encoder control below. These implementations must pass their technical and
@@ -239,18 +324,45 @@ The integrated metrics phase additionally runs two explicit sensitivity systems:
 ### 7. Participant-level biological models
 
 Keep explanatory targets separate: conscious level, experienced content,
-report/task relevance, and psychedelic organization. Use participant random effects
-for repeated awakenings/trials and participant-stratified nested validation for
-prediction. No participant's windows may cross train/validation/test boundaries.
-Scaling, imputation, dimensionality reduction, HMM/state dictionaries, tuning, and
-calibration are fitted inside training partitions.
+report/task relevance, and psychedelic organization. Representation-discovery
+participants fit the projection, state dictionary, and healthy profile objects once;
+validation selects technical state stability, after which those objects remain
+frozen. No participant's windows may cross train/validation/test boundaries. The
+primary five-axis classifier fits scaling and tunes its logistic regularization only
+inside participant-separated training folds. Median imputation and scaling for the
+separate representation-control diagnostic are likewise training-fold-contained;
+neither path refits the frozen representation objects. Calibration slope and
+intercept are out-of-fold evaluation diagnostics, not a fitted recalibration model.
 
-Report AUROC, AUPRC, balanced accuracy, Brier score, calibration slope/ECE,
-participant-stratified bootstrap intervals, participant-level permutations with the
-plus-one correction, omnibus tests, FDR-controlled axis follow-ups, equivalence
-intervals, property redundancy, leave-one-property-out ablations, and matched-size
-conventional baselines. Preserve every result; no threshold controls whether the
-TMS, clinical, or fMRI phase runs.
+For DREAM/Tononi, the primary experienced-content contrast is fixed to the final
+20 seconds before an awakening from N2: definite experience with recalled specific
+content (`DE`, release code 2) versus no experience (`NE`, release code 0). Experience
+without recalled content (`DEWR`, code 1) remains a distinct secondary category and
+is never merged into DE. An awakening time, recording duration, and last-stage code
+must all be present and valid for the primary contrast; absent timing or stage
+metadata makes that unit explicitly ineligible rather than invoking a fallback
+window or inferred sleep stage.
+
+For categorical contrasts, repeated equal-window profiles are the primary estimand.
+All-available participant-condition profiles and conventional-feature comparisons
+are separately identified sensitivities and can never be relabelled primary when
+matched profiles are absent or invalid. Repeated observations additionally receive
+a participant-random-intercept model when at least three participants support that
+design; otherwise the mixed-model component is explicitly unavailable.
+
+Report AUROC, AUPRC, balanced accuracy, Brier score, ECE, and out-of-fold calibration
+slope/intercept; these are evaluation diagnostics, not a recalibration fit. Axis,
+omnibus, and predictive metrics carry 95% participant-cluster
+bootstrap intervals. Axis equivalence uses a 90% two-one-sided bootstrap interval
+against `statistics.continuous_smallest_effect`; non-significance alone is never
+called equivalence. Report pairwise axis correlations and conditioning, explicit
+leave-one-property-out metric deltas, and leave-one-dataset-out performance only
+when at least two datasets contain both arms and untouched evaluation observations.
+Conventional baselines must have exactly the same eligible participant-condition
+cell keys and sample counts as their five-axis sensitivity; any missing or extra cell
+makes the comparison unavailable rather than silently shrinking either analysis.
+Preserve every result and unavailable reason; no threshold controls whether the TMS,
+clinical, or fMRI phase runs.
 
 Prediction keeps representation-discovery/validation participants as fixed fitting
 rows and scores only untouched evaluation-eligible participants in outer folds.
@@ -281,19 +393,34 @@ through TMS.
 This is an implementation-provenance snapshot only—not a public registration,
 preregistration, scientific gate, or claim that healthy findings were favourable.
 
-Clinical raw releases may have been acquired and included in file-level integrity
-inventories earlier, but their signals are deliberately excluded from the healthy
-preprocess and encode phases. Only after the lock validates does `locked-clinical`
-parse the two DoC releases, construct their cohort manifests, preprocess and encode
-their signals, and apply the frozen healthy objects.
+Clinical raw releases may have been acquired and included in the full physical-file
+inventory earlier, but their signals are deliberately excluded from healthy signal
+QC, preprocessing, and encoding. Only after the lock validates does
+`locked-clinical` create a clinical-only inventory, run the same label-blind signal-QC
+contract, parse the two DoC releases, construct their cohort manifests, preprocess
+and encode their signals, and apply the frozen healthy objects.
 
 Apply the frozen encoder, projection/state dictionary, and healthy-calibrated profile
 estimator to the Figshare resting-EEG and Mendeley PSG DoC resources without
-refitting. Associate preserved regime profiles
-with diagnosis and available CRS-R while retaining dataset terms and uncertainty.
-Do not automatically reclassify individuals. Document montage-limited properties
-for PSG and report discordant cases. Missing official label keys remain missing;
-they are never inferred from file order or signal features.
+refitting. The Mendeley PSG release follows a dedicated sparse clinical montage
+branch (observed frontal, central, and occipital channels; no interpolation) instead
+of the healthy `>=15`-channel encoder eligibility rule. Each output records which
+five-axis properties are unavailable or limited by the observed montage.
+
+Axis-wise profiles remain the primary clinical transfer outputs. The only composite
+similarity summary is the proposal-defined secondary log-likelihood ratio under the
+frozen paired healthy wake versus propofol-sedation reference distributions; positive
+values are more wake-like and are never interpreted as probabilities of
+consciousness. Missing axes or a missing frozen reference make this summary
+explicitly unavailable—no axis or endpoint is imputed. Associate the axis-wise
+profiles and secondary likelihood ratio with diagnosis and available CRS-R at the
+participant level. CRS-R associations use Spearman rank correlation; diagnosis uses
+Kruskal-Wallis with epsilon-squared. Both carry participant bootstrap intervals and
+plus-one participant-label permutation P values, with Benjamini-Hochberg correction
+within each dataset and endpoint. P values and FDR decisions are reported but never
+control execution. Do not automatically reclassify individuals. Report discordant
+cases. Missing official label keys remain missing; they are never inferred from file
+order or signal features.
 
 ### 10. Secondary fMRI triangulation
 
@@ -309,6 +436,17 @@ repertoire, transition-based metastability, directionality, and lagged alignment
 Reachability is explicitly excluded because passive fMRI does not provide direct
 perturbational controllability. Treat the stage as secondary cross-modal
 triangulation with its own limitations, not an EEG-estimator substitution.
+
+Collapse runs with equal weight inside each participant-condition cell before any
+condition comparison. Using only the explicit effect-site concentration and audited
+LOR/ROR timing labels, estimate propofol-minus-wake and post-LOR-minus-post-ROR
+paired differences separately within discovery, validation, and test partitions.
+Bootstrap participant pairs and use participant-level sign-flip permutations with
+the plus-one correction; when pairing is insufficient, publish the unavailable
+status and issue ledger without substituting windows or runs as observations.
+Because the EEG and fMRI samples are unrelated cohorts, describe agreement only as
+independent-cohort triangulation. Never calculate participant-level EEG-fMRI
+correlations unless a separate, explicit participant mapping has been verified.
 
 ### 11. Final figures and source data
 
@@ -489,17 +627,19 @@ history.
   match and every artifact is rehashed. The fMRI phase also requires its immutable
   late-input record to match the manifest and asset hashes already bound to the run.
 - A zero exit code without an atomic, schema-valid phase receipt is a failure.
-- Acquisition retries are bounded and resume `.partial` content; no mutating command
+- Acquisition retries are bounded and resume `.part` content; no mutating command
   is blindly replayed after an ambiguous disconnect.
 - `status.sh` is read-only. Logs can be tailed through a fresh SSH connection; do not
   attach the only monitoring path to a disposable client session.
 
 ## GitHub and release tracking
 
-GitHub is the source-of-truth for code, configuration, tests, manifests, roadmap,
-and reviewed small results/source-data. Deploy only an exact commit from
+GitHub is the source-of-truth for code, configuration, tests, checksum metadata,
+roadmap, and operational status only. Raw data, derived data, participant-level data,
+aggregate analysis tables, figure source-data tables, model caches, and durable logs
+remain on approved university storage. Deploy only an exact commit from
 `pwa209/Neural-Manifolds`; never deploy an ambiguous branch tip. The server creates
-`SOURCE_PROVENANCE.json` and `SOURCE_MANIFEST.sha256` in a content-addressed release
+`SOURCE_PROVENANCE.json` and `SOURCE_MANIFEST.sha256` in a content-addressed release,
 and the queue includes that manifest hash in every phase identity.
 
 Before each push, verify that ignore rules cover raw data, partial downloads,
@@ -511,13 +651,18 @@ the exploratory/non-preregistered project status.
 
 ## Remaining prerequisites and dataset-scoped blockers
 
-No server deployment, queue launch, or real-data acquisition has started. The
-reviewed Python 3.11/CUDA 12.6 lock and BrainLM revision/file hashes are already
-pinned; they are not remaining prerequisites.
+Server bootstrap, exact-source deployment, runtime construction, H100 validation,
+source audit, and the direct-to-NAS acquisition launch have completed. Their live
+identifiers and durable log paths are recorded in `STATUS.md`. The reviewed Python
+3.11/CUDA 12.6 lock and BrainLM revision/file hashes are pinned; they are not
+remaining prerequisites.
 
-The reviewed initial implementation is published on GitHub and the confirmed roots
-are recorded. The remaining global launch prerequisite is selection of the exact
-published commit for content-addressed deployment.
+The remaining global prerequisite for queuing `qc` and all later scientific phases
+is a new exact GitHub commit containing the completed scientific-validity fixes,
+with repository-wide tests, formatting, source-inventory validation, archive
+rehashing, and server-side check-only/dry-run validation. Acquisition completion is
+also a technical input requirement for datasets used by those phases. Neither item
+is a scientific outcome gate.
 
 External dataset/phase blockers and limitations remain explicit:
 

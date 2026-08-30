@@ -130,24 +130,24 @@ figures:
         - task_relevant_vs_irrelevant_report
   figure_4:
     title: Passive reachability predicts direct perturbational response
-    core_conclusion: Participant-level passive reachability covaries with direct TMS-evoked response while preserving condition-dependent post-pulse dynamics.
+    core_conclusion: Within-participant awake-minus-propofol changes in passive reachability covary with changes in direct TMS-evoked response while preserving condition-dependent post-pulse dynamics.
     archetype: asymmetric mixed-modality figure
     final_size_mm: [183, 120]
     panel_map:
-      a: Passive reachability versus direct response for individual participants.
+      a: Awake-minus-propofol passive-reachability delta versus the corresponding direct-response delta for individual participants.
       b: Direct response by condition with participant-bootstrap uncertainty.
       c: Source-derived post-pulse trajectory with participant-bootstrap uncertainty over time.
     evidence_hierarchy:
-      hero: Passive-to-direct participant-level association.
+      hero: Passive-to-direct within-participant condition-delta association.
       validation: Condition-stratified direct response and time-resolved trajectory.
       controls: Pulse/QC provenance and biological n.
-    statistics: Descriptive least-squares line, Pearson r, and participant-bootstrap 95% intervals; no causal slope claim and no p-value stars.
+    statistics: Participant-level awake-minus-propofol deltas, Spearman rho, a descriptive least-squares line, and participant-bootstrap 95% intervals; no causal slope claim and no p-value stars.
     source_data: TMS participant and time-course table.
     image_integrity: Pulse trajectory is plotted without smoothing or selective time cropping beyond recorded source bounds.
     reviewer_risks:
       - Shared preprocessing could induce circular passive-direct association.
       - Trial counts and rejected epochs could differ by condition.
-      - A pooled association could be driven by condition separation.
+      - The paired delta association can still be sensitive to influential participants at small biological n.
   figure_5:
     title: Regime contrasts survive prespecified null-family perturbations
     core_conclusion: Participant-level observed contrasts remain directionally stronger than their matched null contrasts across prespecified surrogate and control families, with independent fMRI triangulation when available.
@@ -189,13 +189,13 @@ figures:
     final_size_mm: [183, 120]
     panel_map:
       a: Participant-level five-axis profiles grouped by recorded diagnosis.
-      b: Regime-preservation score versus CRS-R total for individual participants.
+      b: Frozen healthy-wake versus propofol log-likelihood ratio versus CRS-R total for individual participants.
       c: Participant-by-axis heatmap exposing heterogeneity and discordant cases without names or diagnostic relabelling.
     evidence_hierarchy:
       hero: Individual frozen clinical profiles and CRS-R association.
       validation: Cross-dataset diagnostic-group structure.
-      controls: Pseudonymous participant indexing, uncertainty, and explicit non-diagnostic scope.
-    statistics: Participant-level display, group means with participant-bootstrap 95% intervals, descriptive Pearson r; no automatic reclassification and no p-value stars.
+      controls: Pseudonymous participant indexing, sparse-montage limitations, uncertainty, and explicit non-diagnostic scope.
+    statistics: Participant-level display, group means with participant-bootstrap 95% intervals, Spearman rank association with a descriptive least-squares line; no automatic reclassification, slope inference, or p-value stars.
     source_data: Optional held-out clinical participant profile table.
     image_integrity: Clinical identifiers are pseudonymous and never drawn as labels; no participant is removed for visual concordance.
     reviewer_risks:

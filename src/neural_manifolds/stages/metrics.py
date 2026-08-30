@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -16,6 +16,12 @@ import pandas as pd
 
 from neural_manifolds.config import StudyConfig, config_sha256
 from neural_manifolds.dynamics.state_dictionary import StateDictionary, fit_state_dictionary
+from neural_manifolds.foundation.overlap import (
+    OVERLAP_ARTIFACT_COLUMNS,
+    ensure_pretraining_overlap_columns,
+    summarize_pretraining_overlap,
+)
+from neural_manifolds.manifold.clinical_reference import FrozenWakePropofolLikelihoodRatio
 from neural_manifolds.manifold.profile import AXIS_NAMES, FiveAxisProfileEstimator, ManifoldRecord
 from neural_manifolds.manifold.surrogates import (
     block_permutation,
@@ -25,6 +31,7 @@ from neural_manifolds.manifold.surrogates import (
     rotate_channels,
 )
 from neural_manifolds.provenance import atomic_write_json, sha256_file
+from neural_manifolds.tms_separation import assert_no_direct_tms
 
 
 @dataclass(frozen=True)
@@ -87,7 +94,12 @@ def _load_unit(row: Mapping[str, Any]) -> LoadedUnit:
             if "alignment_segment_ids" in archive
             else None
         )
-    if trajectory.ndim != 2 or trajectory.shape[0] < 20:
+    declared_minimum = row.get("minimum_valid_windows_required")
+    if isinstance(declared_minimum, (int, float, np.generic)) and np.isfinite(declared_minimum):
+        minimum_windows = max(1, int(declared_minimum))
+    else:
+        minimum_windows = 20
+    if trajectory.ndim != 2 or trajectory.shape[0] < minimum_windows:
         raise ValueError(f"trajectory is too short or malformed: {path}")
     if len(regional) < 2 or len({values.shape[0] for values in regional.values()}) != 1:
         raise ValueError(f"at least two time-aligned regional trajectories are required: {path}")
@@ -156,10 +168,27 @@ def _reference_split(
     return discovery, validation, evaluation
 
 
-def _segments(lengths: Iterable[int]) -> np.ndarray:
-    return np.concatenate(
-        [np.full(int(length), index, dtype=np.int64) for index, length in enumerate(lengths)]
-    )
+def _combined_segment_runs(
+    records: Sequence[ManifoldRecord],
+    *,
+    attribute: str,
+    lengths: Sequence[int],
+) -> np.ndarray:
+    """Concatenate records without reconnecting any existing temporal break."""
+
+    combined: list[np.ndarray] = []
+    next_segment = 0
+    for record, length in zip(records, lengths, strict=True):
+        source = getattr(record, attribute)
+        segments = np.zeros(length, dtype=np.int64) if source is None else np.asarray(source)
+        if segments.ndim != 1 or len(segments) != length:
+            raise ValueError(f"{attribute} must align with its record")
+        run_starts = np.r_[True, segments[1:] != segments[:-1]]
+        local = np.cumsum(run_starts, dtype=np.int64) - 1
+        local += next_segment
+        combined.append(local)
+        next_segment = int(local[-1]) + 1
+    return np.concatenate(combined)
 
 
 def _combine_records(records: Sequence[ManifoldRecord], *, name: str) -> ManifoldRecord:
@@ -175,6 +204,16 @@ def _combine_records(records: Sequence[ManifoldRecord], *, name: str) -> Manifol
         len(np.asarray(record.regional_trajectories[next(iter(sorted(region_names)))]))
         for record in records
     ]
+    repertoire_trajectories = [
+        np.asarray(
+            record.trajectory
+            if record.repertoire_trajectory is None
+            else record.repertoire_trajectory
+        )
+        for record in records
+    ]
+    if len({value.shape[1] for value in repertoire_trajectories}) != 1:
+        raise ValueError("combined record has inconsistent repertoire dimensions")
     return ManifoldRecord(
         trajectory=np.concatenate([np.asarray(record.trajectory) for record in records]),
         states=np.concatenate([np.asarray(record.states) for record in records]),
@@ -184,8 +223,17 @@ def _combine_records(records: Sequence[ManifoldRecord], *, name: str) -> Manifol
             )
             for region in sorted(region_names)
         },
-        segment_ids=_segments(global_lengths),
-        alignment_segment_ids=_segments(alignment_lengths),
+        repertoire_trajectory=np.concatenate(repertoire_trajectories),
+        segment_ids=_combined_segment_runs(
+            records,
+            attribute="segment_ids",
+            lengths=global_lengths,
+        ),
+        alignment_segment_ids=_combined_segment_runs(
+            records,
+            attribute="alignment_segment_ids",
+            lengths=alignment_lengths,
+        ),
         name=name,
     )
 
@@ -196,6 +244,7 @@ def _record(unit: LoadedUnit, dictionary: StateDictionary) -> ManifoldRecord:
         trajectory=projected,
         states=dictionary.predict_projected(projected, segment_ids=unit.segment_ids),
         regional_trajectories=unit.regional,
+        repertoire_trajectory=unit.trajectory,
         segment_ids=unit.segment_ids,
         alignment_segment_ids=unit.alignment_segment_ids,
         name=unit.unit_id,
@@ -238,6 +287,8 @@ def _profile_row(
         "dataset_id": unit.dataset_id,
         "n_windows": int(unit.trajectory.shape[0]),
         "state_method": state_method,
+        "repertoire_source_dimension": int(details.repertoire.n_features),
+        "dynamics_projection_dimension": int(details.local_dynamics.transition_matrices.shape[-1]),
         "repertoire_effective_rank": details.repertoire.effective_rank,
         "metastability_median_dwell_seconds": details.metastability.median_dwell,
         "metastability_switching_rate": details.metastability.switching_rate,
@@ -260,10 +311,19 @@ def _surrogate_record(
     seed: int,
 ) -> ManifoldRecord:
     trajectory = np.asarray(record.trajectory)
+    repertoire_trajectory = np.asarray(
+        record.trajectory if record.repertoire_trajectory is None else record.repertoire_trajectory
+    )
     regional = {name: np.asarray(value) for name, value in record.regional_trajectories.items()}
     if family == "phase_randomization":
         trajectory_null = _within_segments(
             trajectory,
+            np.asarray(record.segment_ids) if record.segment_ids is not None else None,
+            phase_randomized_surrogate,
+            seed=seed,
+        )
+        repertoire_null = _within_segments(
+            repertoire_trajectory,
             np.asarray(record.segment_ids) if record.segment_ids is not None else None,
             phase_randomized_surrogate,
             seed=seed,
@@ -293,6 +353,12 @@ def _surrogate_record(
             segment_ids=record.segment_ids,
             random_state=seed,
         )
+        repertoire_null = block_permutation(
+            repertoire_trajectory,
+            block_size=block,
+            segment_ids=record.segment_ids,
+            random_state=seed,
+        )
         regional_null = {
             name: block_permutation(
                 value,
@@ -308,6 +374,7 @@ def _surrogate_record(
         )
     elif family == "post_encoder_latent_rotation_control":
         trajectory_null = rotate_channels(trajectory, random_state=seed)
+        repertoire_null = rotate_channels(repertoire_trajectory, random_state=seed)
         regional_null = {
             name: rotate_channels(value, random_state=seed + index + 1)
             for index, (name, value) in enumerate(sorted(regional.items()))
@@ -318,6 +385,7 @@ def _surrogate_record(
         )
     elif family == "covariance_dwell_matched_state_space":
         trajectory_null = covariance_matched_surrogate(trajectory, random_state=seed)
+        repertoire_null = covariance_matched_surrogate(repertoire_trajectory, random_state=seed)
         states = dwell_matched_state_surrogate(
             record.states, segment_ids=record.segment_ids, random_state=seed + 1
         )
@@ -331,10 +399,41 @@ def _surrogate_record(
         trajectory=trajectory_null,
         states=states,
         regional_trajectories=regional_null,
+        repertoire_trajectory=repertoire_null,
         segment_ids=record.segment_ids,
         alignment_segment_ids=record.alignment_segment_ids,
         name=f"{record.name}:{family}:{seed}",
     )
+
+
+def _alignment_lag_indices(study: StudyConfig) -> tuple[int, ...]:
+    """Map honest, non-overlapping encoder-window lags to trajectory indices."""
+
+    window_ms = study.representation.alignment_window_seconds * 1000.0
+    step_ms = study.representation.alignment_step_seconds * 1000.0
+    if abs(step_ms - window_ms) > 1e-9:
+        raise ValueError(
+            "alignment trajectories must use non-overlapping LaBraM windows; "
+            "no independent high-temporal-resolution sensor/CSD track is implemented"
+        )
+    configured = study.metrics.get("alignment", {}).get("lags_ms")
+    if not isinstance(configured, list) or not configured:
+        raise ValueError("metrics.alignment.lags_ms must be a non-empty list")
+    indices: list[int] = []
+    for value in configured:
+        lag_ms = float(value)
+        if lag_ms + 1e-9 < window_ms:
+            raise ValueError(
+                "sub-window alignment lags are unavailable without an independent "
+                "high-temporal-resolution sensor/CSD track"
+            )
+        lag_index = round(lag_ms / step_ms)
+        if abs(lag_ms - lag_index * step_ms) > 1e-9:
+            raise ValueError("alignment lags must lie exactly on the non-overlapping grid")
+        indices.append(lag_index)
+    if len(set(indices)) != len(indices):
+        raise ValueError("alignment lags map to duplicate trajectory indices")
+    return tuple(sorted(indices))
 
 
 def run_metrics(
@@ -350,10 +449,12 @@ def run_metrics(
     """Estimate participant-condition profiles without treating windows as subjects."""
 
     frame = pd.read_parquet(encoding_manifest)
+    assert_no_direct_tms(frame, stage="general metric input")
     required = {"participant_id", "dataset_id", "trajectory_path", "encoded"}
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"encoding manifest is missing {sorted(missing)}")
+    frame = ensure_pretraining_overlap_columns(frame, default_model_id="labram_base")
     eligible = frame[frame["encoded"].astype(bool)].copy()
     if "clinical_holdout" in eligible:
         eligible = eligible[~eligible["clinical_holdout"].fillna(False).astype(bool)]
@@ -415,11 +516,7 @@ def run_metrics(
         reference_by_participant.append(
             _combine_records(participant_records, name=f"reference:{participant}")
         )
-    lag_step_ms = study.representation.alignment_step_seconds * 1000.0
-    configured_lags = study.metrics["alignment"]["lags_ms"]
-    lag_indices = tuple(
-        sorted({max(1, round(float(value) / lag_step_ms)) for value in configured_lags})
-    )
+    lag_indices = _alignment_lag_indices(study)
     estimator = FiveAxisProfileEstimator(
         sample_interval=study.representation.harmonised_step_seconds,
         alignment_lags=lag_indices,
@@ -451,9 +548,24 @@ def run_metrics(
             "not_used_for_representation",
         }
         rows.append(row)
+    profile_frame = pd.DataFrame(rows)
+    clinical_reference_status: dict[str, Any]
+    try:
+        clinical_reference = FrozenWakePropofolLikelihoodRatio().fit(profile_frame)
+        estimator.wake_propofol_reference_ = clinical_reference
+        clinical_reference_status = clinical_reference.audit()
+    except ValueError as error:
+        # Unit tests and partial exploratory runs may not contain both reference
+        # conditions.  The metric stage remains useful, but clinical transfer
+        # will fail closed rather than manufacture a reference distribution.
+        estimator.wake_propofol_reference_ = None
+        clinical_reference_status = {
+            "status": "unavailable",
+            "reason": str(error),
+        }
     destination = Path(output_root)
     destination.mkdir(parents=True, exist_ok=True)
-    profiles_path = _atomic_parquet(pd.DataFrame(rows), destination / "profiles.parquet")
+    profiles_path = _atomic_parquet(profile_frame, destination / "profiles.parquet")
     dictionary_path = _atomic_joblib(dictionary, destination / "state-dictionary.joblib")
     estimator_path = _atomic_joblib(estimator, destination / "profile-estimator.joblib")
 
@@ -482,6 +594,10 @@ def run_metrics(
                             "unit_id": unit.unit_id,
                             "participant_id": unit.participant_id,
                             "dataset_id": unit.dataset_id,
+                            **{
+                                column: unit.metadata.get(column)
+                                for column in OVERLAP_ARTIFACT_COLUMNS
+                            },
                             "family": family,
                             "repeat": repeat,
                             "seed": seed,
@@ -504,6 +620,7 @@ def run_metrics(
                 "unit_id",
                 "participant_id",
                 "dataset_id",
+                *OVERLAP_ARTIFACT_COLUMNS,
                 "family",
                 "repeat",
                 "seed",
@@ -533,8 +650,18 @@ def run_metrics(
                 | (validation_ids & evaluation_ids)
             ),
             "state_dictionary": dictionary.audit(),
+            "profile_input_spaces": estimator.input_space_audit(),
+            "pretraining_overlap": summarize_pretraining_overlap(profile_frame),
+            "clinical_wake_propofol_reference": clinical_reference_status,
+            "alignment_lags_ms": list(study.metrics["alignment"]["lags_ms"]),
             "alignment_lag_indices": list(lag_indices),
+            "alignment_window_seconds": study.representation.alignment_window_seconds,
             "alignment_step_seconds": study.representation.alignment_step_seconds,
+            "alignment_windows_overlap": False,
+            "unavailable_short_lags_ms": list(
+                study.metrics["alignment"].get("unavailable_short_lags_ms", [])
+            ),
+            "short_lag_status": study.metrics["alignment"].get("short_lag_status"),
             "null_families": list(families),
             "null_repeats": repeats,
             "null_errors": null_errors,

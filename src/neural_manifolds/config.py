@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -34,9 +34,27 @@ class RepresentationConfig(StrictModel):
     def validate_temporal_tracks(self) -> RepresentationConfig:
         if self.alignment_window_seconds % self.labram_patch_seconds > 1e-9:
             raise ValueError("alignment_window_seconds must contain whole LaBraM patches")
-        if self.alignment_step_seconds > self.alignment_window_seconds:
-            raise ValueError("alignment_step_seconds cannot exceed its window")
+        if abs(self.alignment_step_seconds - self.alignment_window_seconds) > 1e-9:
+            raise ValueError(
+                "the LaBraM alignment track must use non-overlapping windows "
+                "(alignment_step_seconds == alignment_window_seconds)"
+            )
         return self
+
+
+class SignalQCConfig(StrictModel):
+    sample_segments: int = Field(ge=1)
+    seconds_per_segment: float = Field(gt=0)
+    diagnostic_window_seconds: float = Field(gt=0)
+    minimum_eeg_channels: int = Field(ge=2)
+    minimum_recording_seconds: float = Field(gt=0)
+    flat_tolerance_volts: float = Field(gt=0)
+    flat_fraction_limit: float = Field(ge=0, le=1)
+    bad_channel_robust_threshold: float = Field(gt=0)
+    review_bad_channel_fraction: float = Field(ge=0, le=1)
+    artifact_window_robust_threshold: float = Field(gt=0)
+    review_artifact_window_fraction: float = Field(ge=0, le=1)
+    review_montage_position_fraction: float = Field(ge=0, le=1)
 
 
 class PreprocessingConfig(StrictModel):
@@ -52,15 +70,36 @@ class PreprocessingConfig(StrictModel):
     canonical_channels: list[str]
     minimum_canonical_channels: int = Field(gt=0)
     legacy_channel_map: dict[str, str]
+    primary_reference: Literal["average"]
+    require_complete_harmonised_montage: bool
+    native_montage_sensitivity: bool
+    csd_sensitivity: bool
+    csd_minimum_channels: int = Field(ge=4)
+    csd_minimum_position_fraction: float = Field(gt=0, le=1)
+    auxiliary_ica_policy: Literal["report_support_not_performed"]
+    sleep_sensitivity_modalities: list[Literal["psg"]] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_filter_and_channels(self) -> PreprocessingConfig:
         if self.highpass_hz >= self.lowpass_hz:
             raise ValueError("highpass_hz must be lower than lowpass_hz")
+        if not self.highpass_hz < self.sleep_sensitivity_highpass_hz < self.lowpass_hz:
+            raise ValueError(
+                "sleep_sensitivity_highpass_hz must be above the primary high-pass "
+                "and below the low-pass"
+            )
         if self.minimum_canonical_channels > len(self.canonical_channels):
             raise ValueError("minimum_canonical_channels exceeds canonical channel count")
         if len(set(self.canonical_channels)) != len(self.canonical_channels):
             raise ValueError("canonical_channels contains duplicates")
+        if self.csd_minimum_channels > len(self.canonical_channels):
+            raise ValueError("csd_minimum_channels exceeds canonical channel count")
+        if self.require_complete_harmonised_montage and len(self.canonical_channels) != 19:
+            raise ValueError("the complete harmonised montage must contain exactly 19 channels")
+        if self.csd_sensitivity and not self.native_montage_sensitivity:
+            raise ValueError("CSD sensitivity requires the native-montage sensitivity")
+        if len(set(self.sleep_sensitivity_modalities)) != len(self.sleep_sensitivity_modalities):
+            raise ValueError("sleep_sensitivity_modalities contains duplicates")
         return self
 
 
@@ -113,6 +152,7 @@ class StudyConfig(StrictModel):
     scientific_gates: bool
     random_seeds: list[int] = Field(min_length=1)
     representation: RepresentationConfig
+    signal_qc: SignalQCConfig
     preprocessing: PreprocessingConfig
     metrics: dict[str, Any]
     sampling: SamplingConfig
@@ -129,6 +169,24 @@ class StudyConfig(StrictModel):
             raise ValueError("random seeds must be unique")
         if not self.representation.weights_frozen or not self.representation.label_free:
             raise ValueError("primary representation must be frozen and label-free")
+        alignment = self.metrics.get("alignment")
+        if not isinstance(alignment, dict):
+            raise ValueError("metrics.alignment must be a mapping")
+        lags = alignment.get("lags_ms")
+        if not isinstance(lags, list) or not lags:
+            raise ValueError("metrics.alignment.lags_ms must be a non-empty list")
+        if any(
+            isinstance(lag, bool) or not isinstance(lag, (int, float)) or lag <= 0 for lag in lags
+        ):
+            raise ValueError("metrics.alignment.lags_ms must contain positive numbers")
+        support_ms = self.representation.alignment_window_seconds * 1000.0
+        step_ms = self.representation.alignment_step_seconds * 1000.0
+        if any(float(lag) + 1e-9 < support_ms for lag in lags):
+            raise ValueError(
+                "alignment lags must be at least one non-overlapping encoder-window support"
+            )
+        if any(abs(float(lag) / step_ms - round(float(lag) / step_ms)) > 1e-9 for lag in lags):
+            raise ValueError("alignment lags must lie exactly on the alignment-window grid")
         return self
 
 

@@ -89,7 +89,7 @@ def _study() -> StudyConfig:
     study = load_study(source)
     representation = study.representation.model_copy(
         update={
-            "alignment_step_seconds": 0.5,
+            "alignment_step_seconds": 1.0,
             "dynamics_rank": 6,
         }
     )
@@ -99,8 +99,16 @@ def _study() -> StudyConfig:
             "minimum_valid_windows": 10,
         }
     )
+    metrics = {
+        **study.metrics,
+        "alignment": {**study.metrics["alignment"], "lags_ms": [1000, 2000]},
+    }
     return study.model_copy(
-        update={"representation": representation, "preprocessing": preprocessing}
+        update={
+            "representation": representation,
+            "preprocessing": preprocessing,
+            "metrics": metrics,
+        }
     )
 
 
@@ -298,6 +306,20 @@ def test_true_preencoder_permutation_label_firewall_segments_and_restart(
     pd.testing.assert_frame_equal(first_profiles, pd.read_parquet(second.profiles_path))
     root_audit = json.loads(second.audit_path.read_text(encoding="utf-8"))
     assert all(row["reused"] for row in root_audit["repeat_artifacts"])
+    assert root_audit["profile_input_spaces"] == {
+        "repertoire": {
+            "record_field": "repertoire_trajectory",
+            "space": "untruncated_frozen_encoder_embedding",
+            "dimension": 8,
+            "discovery_projection_applied": False,
+        },
+        "dynamics": {
+            "record_field": "trajectory",
+            "space": "discovery_fitted_pca_projection",
+            "dimension": 6,
+            "discovery_projection_applied": True,
+        },
+    }
     assert root_audit["intervention"]["signal_rows_permuted_before_encoder"] is True
     assert root_audit["intervention"]["post_encoder_latent_rotation"] is False
 

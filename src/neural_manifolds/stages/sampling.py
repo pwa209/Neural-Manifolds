@@ -28,6 +28,12 @@ from numpy.typing import NDArray
 
 from neural_manifolds.config import StudyConfig, config_sha256
 from neural_manifolds.dynamics.state_dictionary import StateDictionary
+from neural_manifolds.foundation.overlap import (
+    OVERLAP_OUTPUT_COLUMNS,
+    ensure_pretraining_overlap_columns,
+    overlap_output_fields,
+    summarize_pretraining_overlap,
+)
 from neural_manifolds.manifold.profile import (
     AXIS_NAMES,
     FiveAxisProfileEstimator,
@@ -732,6 +738,7 @@ def _record_from_spans(
             trajectory=projected,
             states=states,
             regional_trajectories=regional,
+            repertoire_trajectory=trajectory,
             segment_ids=coarse_segment_ids,
             alignment_segment_ids=fine_segment_ids,
             name=f"sampling:{source.source_id}:{fingerprint[:12]}",
@@ -816,6 +823,9 @@ def _repeat_group(
                     "sample_fingerprint": fingerprint,
                     "source_unit_count": len(source.units),
                     "source_unit_ids": "|".join(unit.unit_id for unit in source.units),
+                    **overlap_output_fields(
+                        pd.DataFrame([dict(unit.row) for unit in source.units])
+                    ),
                 }
                 for index, axis in enumerate(AXIS_NAMES):
                     row[axis] = float(profile.values[index])
@@ -849,6 +859,7 @@ def _average_profiles(repeats: pd.DataFrame) -> pd.DataFrame:
         "condition_levels",
         "source_unit_count",
         "source_unit_ids",
+        *OVERLAP_OUTPUT_COLUMNS,
     ]
     columns = [
         *identity,
@@ -919,6 +930,7 @@ def _reliability_curves(repeats: pd.DataFrame, audit_rows: list[dict[str, Any]])
         "dataset_id",
         "contrast_arm",
         "duration_seconds",
+        *OVERLAP_OUTPUT_COLUMNS,
         "axis",
         "status",
         "profile_count",
@@ -929,7 +941,13 @@ def _reliability_curves(repeats: pd.DataFrame, audit_rows: list[dict[str, Any]])
     if frame.empty:
         return pd.DataFrame(columns=columns)
     rows: list[dict[str, Any]] = []
-    group_columns = ["contrast_id", "dataset_id", "contrast_arm", "duration_seconds"]
+    group_columns = [
+        "contrast_id",
+        "dataset_id",
+        "contrast_arm",
+        "duration_seconds",
+        *OVERLAP_OUTPUT_COLUMNS,
+    ]
     for keys, group in frame.groupby(group_columns, dropna=False, sort=True):
         for axis in AXIS_NAMES:
             pivot = group.pivot_table(index="profile_id", columns="repeat", values=axis)
@@ -1007,6 +1025,7 @@ def run_sampling_sensitivity(
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"encoding manifest is missing {sorted(missing)}")
+    frame = ensure_pretraining_overlap_columns(frame, default_model_id="labram_base")
     audit_rows: list[dict[str, Any]] = []
     units: list[UnitSegments] = []
     eligible = frame[frame["encoded"].fillna(False).astype(bool)].copy()
@@ -1142,6 +1161,7 @@ def run_sampling_sensitivity(
         "sample_fingerprint",
         "source_unit_count",
         "source_unit_ids",
+        *OVERLAP_OUTPUT_COLUMNS,
         *AXIS_NAMES,
         *(f"{axis}_raw" for axis in AXIS_NAMES),
     ]
@@ -1166,6 +1186,21 @@ def run_sampling_sensitivity(
             "encoding_manifest_sha256": sha256_file(encoding_manifest),
             "state_dictionary_sha256": sha256_file(state_dictionary_path),
             "profile_estimator_sha256": sha256_file(profile_estimator_path),
+            "profile_input_spaces": {
+                "repertoire": {
+                    "record_field": "repertoire_trajectory",
+                    "space": "untruncated_frozen_encoder_embedding",
+                    "dimension": int(dictionary.projection.n_features_in_),
+                    "discovery_projection_applied": False,
+                },
+                "dynamics": {
+                    "record_field": "trajectory",
+                    "space": "discovery_fitted_pca_projection",
+                    "dimension": int(dictionary.projection.n_components_),
+                    "discovery_projection_applied": True,
+                },
+            },
+            "pretraining_overlap": summarize_pretraining_overlap(eligible),
             "contrasts_sha256": sha256_file(contrasts_path),
             "encoded_units_seen": len(eligible),
             "synchronized_units_available": len(units),

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
+import yaml
 
 from neural_manifolds.adapters import (
     CogitateMEEGAdapter,
@@ -78,19 +81,48 @@ def _dream_row(*, case: str, experience: int) -> dict[str, object]:
     }
 
 
-def test_dream_experience_codes_create_episode_intervals() -> None:
+def test_dream_primary_uses_n2_final_20_seconds_and_de_vs_ne_only() -> None:
     records = pd.DataFrame(
-        [_dream_row(case="1_1", experience=2), _dream_row(case="1_2", experience=0)]
+        [
+            _dream_row(case="1_1", experience=2),
+            _dream_row(case="1_2", experience=1),
+            _dream_row(case="1_3", experience=0),
+        ]
     )
     units = DreamSerialAwakeningsAdapter().adapt(records)
     assert [unit.condition for unit in units] == [
         "dream_experience_with_recall",
+        "dream_experience_without_recall",
         "no_dream_experience",
     ]
     assert units[0].selector.kind == "interval_seconds"
+    assert units[0].selector.start_seconds == 280.0
     assert units[0].selector.stop_seconds == 300.0
     assert units[0].content == "recalled_experience"
-    assert units[1].report_produced is False
+    assert units[0].variables["last_sleep_stage"] == "N2"
+    assert units[0].variables["dream_primary_contrast_eligible"] is True
+    assert units[1].variables["dream_primary_contrast_eligible"] is False
+    assert units[1].variables["dream_experience_ordinal"] == 1
+    assert units[2].report_produced is False
+    assert units[2].variables["dream_primary_contrast_eligible"] is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("Time of awakening", "", "Time of awakening is missing"),
+        ("Time of awakening", "25:10:00", "does not match audited format"),
+        ("Duration", 19.9, "must contain the final 20s"),
+        ("Last sleep stage", "", "Last sleep stage is missing"),
+    ],
+)
+def test_dream_fails_closed_without_exact_stage_or_awakening_timing(
+    field: str, value: object, message: str
+) -> None:
+    row = _dream_row(case="1_1", experience=2)
+    row[field] = value
+    with pytest.raises(SchemaError, match=message):
+        DreamSerialAwakeningsAdapter().adapt(pd.DataFrame([row]))
 
 
 def test_dream_unknown_experience_is_explicitly_unresolved() -> None:
@@ -99,6 +131,27 @@ def test_dream_unknown_experience_is_explicitly_unresolved() -> None:
     )[0]
     assert unit.metadata_status == "unresolved"
     assert unit.content is None
+
+
+def test_dream_primary_contrast_does_not_merge_dewr_into_de() -> None:
+    document = yaml.safe_load(Path("configs/contrasts.yaml").read_text(encoding="utf-8"))
+    contrasts = {
+        item["id"]: item
+        for item in document["datasets"]["dream_tononi_serial_awakenings"]["contrasts"]
+    }
+    primary = contrasts["dream_experience_vs_no_experience"]
+    assert primary["positive"] == ["dream_experience_with_recall"]
+    assert primary["reference"] == ["no_dream_experience"]
+    assert primary["subset"] == {
+        "last_sleep_stage_code": 2,
+        "dream_primary_contrast_eligible": True,
+    }
+    ordinal = contrasts["dream_experience_ordinal"]
+    assert ordinal["conditions"] == [
+        "no_dream_experience",
+        "dream_experience_without_recall",
+        "dream_experience_with_recall",
+    ]
 
 
 def _tactile_event(

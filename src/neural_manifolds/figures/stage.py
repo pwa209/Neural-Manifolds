@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from neural_manifolds.manifold.clinical_reference import WAKE_REGIME_LLR
 from neural_manifolds.provenance import atomic_write_json, git_revision, sha256_file
 
 from .config import FigureConfig, load_figure_config
@@ -91,6 +92,9 @@ TMS_PARTICIPANT_COLUMNS = {
     "condition",
     "passive_reachability",
     "direct_response",
+    "passive_delta",
+    "direct_delta",
+    "tms_contrast",
     "source_artifact_sha256",
 }
 TMS_TRAJECTORY_COLUMNS = {
@@ -106,7 +110,9 @@ CLINICAL_COLUMNS = {
     "dataset_id",
     "diagnosis",
     "crs_r_total",
-    "regime_preservation_score",
+    WAKE_REGIME_LLR,
+    "wake_regime_score_status",
+    "crs_r_status",
     "R",
     "M",
     "D",
@@ -311,9 +317,10 @@ def _prepare_inputs(
     validate_identifiers(tms_participants, ["condition"], label="tms_participants")
     validate_numeric(
         tms_participants,
-        ["passive_reachability", "direct_response"],
+        ["passive_reachability", "direct_response", "passive_delta", "direct_delta"],
         label="tms_participants",
     )
+    validate_identifiers(tms_participants, ["tms_contrast"], label="tms_participants")
     validate_identifiers(tms_trajectory, ["condition"], label="tms_trajectory")
     validate_numeric(tms_trajectory, ["time_ms", "trajectory_value"], label="tms_trajectory")
     participant_conditions = set(tms_participants["condition"].astype(str))
@@ -327,7 +334,7 @@ def _prepare_inputs(
     if clinical is not None:
         validate_numeric(
             clinical,
-            ["regime_preservation_score", "R", "M", "D", "A", "P"],
+            [WAKE_REGIME_LLR, "R", "M", "D", "A", "P"],
             label="clinical",
         )
         _validate_optional_numeric(clinical, "crs_r_total", label="clinical")
@@ -691,7 +698,7 @@ def _clinical_supplement_input(
     validate_identifiers(clinical, ["participant_id", "dataset_id"], label="clinical")
     validate_numeric(
         clinical,
-        ["regime_preservation_score", "R", "M", "D", "A", "P"],
+        [WAKE_REGIME_LLR, "R", "M", "D", "A", "P"],
         label="clinical",
     )
     _validate_optional_numeric(clinical, "crs_r_total", label="clinical")

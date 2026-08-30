@@ -2,7 +2,11 @@
 # for example CHECKPOINT_ROOT/metadata/fmri-inputs/<review-id>.yaml. Replace every
 # placeholder, review the atlas/coordinate pairing and timing convention, then pass
 # that absolute copy to launch_queue.sh --fmri-input-manifest. Do not commit raw or
-# participant-level data to Git.
+# participant-level data to Git. The analysis uses the explicit LOR/ROR timing and
+# effect-site concentration labels only after frozen BrainLM encoding, collapses
+# runs within participant-condition, and keeps discovery/validation/test inference
+# separate. EEG and fMRI remain independent cohorts; this file does not establish
+# or authorize a participant mapping between modalities.
 schema_version: 1
 ukb424_atlas_path: <ABSOLUTE_PATH_TO_APPROVED_UKB_424_ATLAS_NIFTI>
 ukb424_coordinates_path: <ABSOLUTE_PATH_TO_MATCHING_ORDERED_424_ROW_COORDINATES>

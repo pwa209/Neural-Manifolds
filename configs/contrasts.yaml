@@ -55,10 +55,10 @@ datasets:
         conditions: [awake, propofol_sedation]
         subset: {modality: eeg}
         match_within: participant_id
+    omitted_contrasts:
       - id: awake_vs_direct_tms_under_propofol
-        conditions: [awake, propofol_sedation]
-        subset: {acquisition: tms}
-        match_within: participant_id
+        status: omitted
+        reason: Direct TMS-EEG requires the dedicated pulse-interpolation TMS stage and is unavailable to the general encoder/model path.
     unresolved:
       - The v1.0.0 release has no participant/run dream-report table linking task-sed2 to experience.
       - Do not use task-sed2 as an experienced-content label until an official key is obtained.
@@ -72,22 +72,30 @@ datasets:
     clinical_holdout: false
     native_sources: [Records.csv, Records-README.txt, Data/PSG/*.edf]
     verified_mapping:
-      experience_2: {condition: dream_experience_with_recall, contrast_eligible: true}
-      experience_1: {condition: dream_experience_without_recall, contrast_eligible: true}
-      experience_0: {condition: no_dream_experience, contrast_eligible: true}
+      experience_2: {condition: dream_experience_with_recall, class: DE, primary_eligible_in_N2: true}
+      experience_1: {condition: dream_experience_without_recall, class: DEWR, primary_eligible_in_N2: false}
+      experience_0: {condition: no_dream_experience, class: NE, primary_eligible_in_N2: true}
       experience_-1: {condition: ambiguous_experience_with_or_without_recall, contrast_eligible: false}
       experience_-2: {condition: ambiguous_no_experience_or_without_recall, contrast_eligible: false}
       experience_-3: {condition: ambiguous_recalled_experience_or_none, contrast_eligible: false}
       experience_-4: {condition: unknown_experience, contrast_eligible: false}
     contrasts:
       - id: dream_experience_vs_no_experience
-        positive: [dream_experience_with_recall, dream_experience_without_recall]
+        positive: [dream_experience_with_recall]
         reference: [no_dream_experience]
+        subset: {last_sleep_stage_code: 2, dream_primary_contrast_eligible: true}
+        match_within: participant_id
+      - id: dream_experience_ordinal
+        conditions: [no_dream_experience, dream_experience_without_recall, dream_experience_with_recall]
+        continuous_covariate: dream_experience_ordinal
+        subset: {last_sleep_stage_code: 2, experience_category_unambiguous: true}
         match_within: participant_id
       - id: recalled_vs_unrecalled_experience
         positive: [dream_experience_with_recall]
         reference: [dream_experience_without_recall]
+        subset: {last_sleep_stage_code: 2, experience_category_unambiguous: true}
         match_within: participant_id
+    primary_epoch: {sleep_stage: N2, interval: final_20_seconds_before_awakening}
     unresolved: []
     official_sources:
       - https://bridges.monash.edu/articles/dataset/Tononi_Serial_Awakenings/23306054/2
@@ -202,6 +210,19 @@ datasets:
       VS: vegetative_state
       MCS-: minimally_conscious_minus
       MCS+: minimally_conscious_plus
+    clinical_signal_branch:
+      id: clinical_low_channel_psg
+      official_eeg_positions: [F3, F4, C3, C4, O1, O2]
+      minimum_channels: 2
+      minimum_spatial_regions: 2
+      interpolation: forbidden
+      healthy_objects_refit: false
+      property_scope:
+        repertoire: primary_replication_limited_by_sparse_variable_montage
+        metastability: primary_replication_limited_by_sparse_variable_montage
+        directionality: primary_replication_limited_by_sparse_variable_montage
+        alignment: unavailable_unless_three_channels_in_each_of_two_required_modules
+        reachability: secondary_passive_only_limited_by_sparse_variable_montage
     contrasts:
       - id: mcs_vs_vs
         positive: [minimally_conscious_minus, minimally_conscious_plus]
@@ -212,6 +233,7 @@ datasets:
     unresolved:
       - CRS-R and demographic covariates are not present in the release-level filename key.
       - Official page text inconsistently reports 42 versus 43 recordings; acquisition inventory is authoritative.
+      - The sparse variable montage is an explicitly limited clinical replication and is never passed through the healthy >=15-channel eligibility rule.
     official_sources:
       - https://data.mendeley.com/datasets/6wx4n25h4v/1
       - https://doi.org/10.17632/6wx4n25h4v.1

@@ -96,6 +96,8 @@ class StateDictionary:
             "n_states": self.n_states,
             "primary_status": self.primary_status,
             "primary_error": self.primary_error,
+            "source_embedding_dimension": int(self.projection.n_features_in_),
+            "dynamics_projection_dimension": int(self.projection.n_components_),
             "projection_components": int(self.projection.n_components_),
             "projection_explained_variance": float(
                 np.sum(self.projection.explained_variance_ratio_)

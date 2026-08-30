@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -86,6 +87,40 @@ def _archive_source_release(root: Path) -> str:
         encoding="utf-8",
     )
     return commit
+
+
+def test_recording_inventory_views_keep_clinical_signal_qc_after_the_lock(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "recordings.parquet"
+    pd.DataFrame(
+        [
+            {
+                "recording_id": "healthy-1",
+                "dataset_id": "tactile_detection",
+                "source_path": "/raw/healthy.edf",
+            },
+            {
+                "recording_id": "clinical-1",
+                "dataset_id": "doc_polysomnography",
+                "source_path": "/raw/clinical.edf",
+            },
+        ]
+    ).to_parquet(source, index=False)
+
+    healthy = phase_runner._write_inventory_subset(
+        source,
+        tmp_path / "healthy.parquet",
+        dataset_ids=phase_runner.HEALTHY_DATASETS,
+    )
+    clinical = phase_runner._write_inventory_subset(
+        source,
+        tmp_path / "clinical.parquet",
+        dataset_ids=phase_runner.CLINICAL_DATASETS,
+    )
+
+    assert pd.read_parquet(healthy)["recording_id"].tolist() == ["healthy-1"]
+    assert pd.read_parquet(clinical)["recording_id"].tolist() == ["clinical-1"]
 
 
 def test_audit_publishes_explicit_tables_issue_ledger_and_archive_commit(

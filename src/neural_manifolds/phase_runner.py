@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from neural_manifolds.cohort import build_cohort_manifest
 from neural_manifolds.config import config_sha256, load_study, load_yaml
 from neural_manifolds.data.acquisition import AcquisitionManager
@@ -27,16 +29,22 @@ from neural_manifolds.data.providers import AccessBlocked, ProviderError
 from neural_manifolds.data.registry import load_dataset_registry
 from neural_manifolds.inventory import scan_recordings, write_inventory
 from neural_manifolds.provenance import atomic_write_json, sha256_file
-from neural_manifolds.stage_units import encode_analysis_units, preprocess_analysis_units
+from neural_manifolds.stage_units import (
+    derivative_artifact_paths,
+    encode_analysis_units,
+    preprocess_analysis_units,
+)
 from neural_manifolds.stages.benchmarks import run_benchmarks
 from neural_manifolds.stages.channel_permutation import (
     combine_null_profile_tables,
     run_preencoder_channel_permutation_control,
 )
-from neural_manifolds.stages.clinical import run_clinical_transfer
+from neural_manifolds.stages.clinical import run_clinical_transfer, validate_clinical_lock
 from neural_manifolds.stages.fmri_driver import run_ds006623_brainlm_stage
 from neural_manifolds.stages.metrics import run_metrics
 from neural_manifolds.stages.models import run_models
+from neural_manifolds.stages.qc import run_signal_qc
+from neural_manifolds.stages.representation_controls import run_representation_controls
 from neural_manifolds.stages.sampling import run_sampling_sensitivity
 from neural_manifolds.stages.tms import build_tms_epoch_manifest, run_tms_validation
 
@@ -63,6 +71,33 @@ HEALTHY_DATASETS = (
     "psiconnect",
 )
 CLINICAL_DATASETS = ("doc_resting_eeg", "doc_polysomnography")
+
+
+def _write_inventory_subset(
+    source: str | Path,
+    destination: str | Path,
+    *,
+    dataset_ids: tuple[str, ...],
+) -> Path:
+    """Publish a deterministic dataset-scoped view of the full recording inventory."""
+
+    source_path = Path(source).resolve(strict=True)
+    frame = pd.read_parquet(source_path)
+    if "dataset_id" not in frame:
+        raise ValueError(f"recording inventory has no dataset_id: {source_path}")
+    selected = frame[frame["dataset_id"].astype(str).isin(dataset_ids)].copy()
+    if selected.empty:
+        raise RuntimeError(f"recording inventory has no rows for {sorted(dataset_ids)}")
+    sort_columns = [
+        column for column in ("dataset_id", "recording_id", "source_path") if column in selected
+    ]
+    selected = selected.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
+    output = Path(destination)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp")
+    selected.to_parquet(temporary, index=False)
+    os.replace(temporary, output)
+    return output
 
 
 @dataclass(frozen=True)
@@ -329,17 +364,34 @@ def _model_audit_table(
                 "target_dataset_ids": dataset_ids,
                 "evidence": None,
             }
+        overlap_status = str(overlap_record.get("status", "unresolved"))
+        if overlap_status != "verified_no_overlap":
+            confirmed_overlap = overlap_status == "confirmed_overlap"
             issues.append(
                 {
                     "issue_id": f"model:{model_id}:pretraining-overlap",
                     "scope": "model",
                     "subject_id": model_id,
                     "category": "pretraining_overlap",
-                    "status": "unresolved",
+                    "status": "confirmed_overlap" if confirmed_overlap else "unresolved",
                     "severity": "analysis_control_required",
                     "technical_gate": False,
-                    "message": "Target-dataset overlap with the published pretraining corpus is unresolved.",
-                    "required_action": "Preserve as an explicit limitation and representation-control item.",
+                    "message": (
+                        "Confirmed target-dataset overlap means the representation is not "
+                        "verified zero-shot."
+                        if confirmed_overlap
+                        else "Target-dataset overlap with the published pretraining corpus "
+                        "is unresolved."
+                    ),
+                    "required_action": (
+                        "Label downstream analyses non-zero-shot and preserve the overlap "
+                        "as an explicit limitation and representation-control item."
+                        if confirmed_overlap
+                        else "Preserve as an explicit limitation and representation-control item."
+                    ),
+                    "control": overlap_record.get("control"),
+                    "limitation": overlap_record.get("limitation"),
+                    "evidence": overlap_record.get("evidence"),
                 }
             )
         if weights and any(not item.get("sha256") for item in weights):
@@ -734,6 +786,7 @@ def run_acquire(context: PhaseContext) -> list[Path]:
 
 
 def run_qc(context: PhaseContext) -> list[Path]:
+    study = load_study(context.study_path)
     registry = load_dataset_registry(context.datasets_path)
     manager = AcquisitionManager(registry)
     validations: list[dict[str, Any]] = []
@@ -757,26 +810,50 @@ def run_qc(context: PhaseContext) -> list[Path]:
     inventory_path = write_inventory(
         scan_recordings(context.raw_root), output_dir / "recordings.parquet"
     )
-    return [validation_path, inventory_path]
+    healthy_inventory = _write_inventory_subset(
+        inventory_path,
+        output_dir / "healthy-recordings.parquet",
+        dataset_ids=HEALTHY_DATASETS,
+    )
+    recording_flow, channel_qc, signal_qc_audit = run_signal_qc(
+        inventory_path=healthy_inventory,
+        output_root=output_dir,
+        study=study,
+    )
+    return [
+        validation_path,
+        inventory_path,
+        healthy_inventory,
+        recording_flow,
+        channel_qc,
+        signal_qc_audit,
+    ]
 
 
 def run_preprocess(context: PhaseContext) -> list[Path]:
     study = load_study(context.study_path)
+    destination = context.output_directory()
     labels, encoder_inputs, issues = build_cohort_manifest(
         raw_root=context.raw_root,
-        output_root=context.output_directory(),
+        output_root=destination,
         dataset_ids=HEALTHY_DATASETS,
     )
     manifest, flow = preprocess_analysis_units(
         encoder_inputs=encoder_inputs,
-        output_root=context.output_directory(),
+        output_root=destination,
         study=study,
+        qc_recordings=context.run_root / "qc" / "recording-flow.parquet",
     )
-    return [labels, encoder_inputs, issues, manifest, flow]
+    nested_derivatives = derivative_artifact_paths(
+        destination,
+        directories=("source-recordings", "units", "provenance"),
+    )
+    return [labels, encoder_inputs, issues, manifest, flow, *nested_derivatives]
 
 
 def run_encode(context: PhaseContext) -> list[Path]:
     study = load_study(context.study_path)
+    destination = context.output_directory()
     manifest = context.run_root / "preprocess" / "preprocessing-manifest.parquet"
     if not manifest.is_file():
         raise FileNotFoundError(f"preprocessing manifest is missing: {manifest}")
@@ -786,10 +863,14 @@ def run_encode(context: PhaseContext) -> list[Path]:
     encoded_manifest, flow = encode_analysis_units(
         preprocessing_manifest=manifest,
         labels_manifest=labels,
-        output_root=context.output_directory(),
+        output_root=destination,
         study=study,
     )
-    return [encoded_manifest, flow]
+    nested_derivatives = derivative_artifact_paths(
+        destination,
+        directories=("trajectories", "provenance"),
+    )
+    return [encoded_manifest, flow, *nested_derivatives]
 
 
 def run_metric_stage(context: PhaseContext) -> list[Path]:
@@ -846,6 +927,17 @@ def run_metric_stage(context: PhaseContext) -> list[Path]:
             output_root=context.output_directory(),
         )
     )
+    representation_control_artifacts = list(
+        run_representation_controls(
+            profiles_path=metric_artifacts[0],
+            benchmarks_path=benchmark_artifacts[0],
+            encoding_manifest_path=manifest,
+            encoding_flow_path=context.run_root / "encode" / "encoding-flow.json",
+            models_path=context.study_path.parent / "models.yaml",
+            output_root=context.output_directory() / "representation-controls",
+            study=study,
+        )
+    )
     return [
         *metric_artifacts,
         *sampling_artifacts,
@@ -853,6 +945,7 @@ def run_metric_stage(context: PhaseContext) -> list[Path]:
         channel_control.audit_path,
         combined_nulls,
         *benchmark_artifacts,
+        *representation_control_artifacts,
     ]
 
 
@@ -954,17 +1047,47 @@ def run_clinical_stage(context: PhaseContext) -> list[Path]:
     lock_value = os.environ.get("NEURAL_MANIFOLDS_CLINICAL_LOCK")
     if not lock_value:
         raise RuntimeError("queue did not provide the technical clinical lock")
+    lock_path = Path(lock_value).resolve(strict=True)
+    validate_clinical_lock(lock_path)
     study = load_study(context.study_path)
     destination = context.output_directory()
+    full_inventory = context.run_root / "qc" / "recordings.parquet"
+    if not full_inventory.is_file():
+        raise FileNotFoundError(f"full recording inventory is missing: {full_inventory}")
+    clinical_inventory = _write_inventory_subset(
+        full_inventory,
+        destination / "qc" / "clinical-recordings.parquet",
+        dataset_ids=CLINICAL_DATASETS,
+    )
+    clinical_recording_flow, clinical_channel_qc, clinical_qc_audit = run_signal_qc(
+        inventory_path=clinical_inventory,
+        output_root=destination / "qc",
+        study=study,
+    )
     labels, encoder_inputs, issues = build_cohort_manifest(
         raw_root=context.raw_root,
         output_root=destination / "cohort",
         dataset_ids=CLINICAL_DATASETS,
     )
+    clinical_labels = pd.read_parquet(labels)
+    required_routing_columns = {"unit_id", "dataset_id"}
+    missing_routing_columns = required_routing_columns.difference(clinical_labels.columns)
+    if missing_routing_columns:
+        raise ValueError(
+            f"clinical cohort labels lack routing columns {sorted(missing_routing_columns)}"
+        )
+    low_channel_ids = frozenset(
+        clinical_labels.loc[
+            clinical_labels["dataset_id"].astype(str).eq("doc_polysomnography"),
+            "unit_id",
+        ].astype(str)
+    )
     preprocessing_manifest, preprocessing_flow = preprocess_analysis_units(
         encoder_inputs=encoder_inputs,
         output_root=destination / "preprocess",
         study=study,
+        clinical_low_channel_unit_ids=low_channel_ids,
+        qc_recordings=clinical_recording_flow,
     )
     encoding_manifest, encoding_flow = encode_analysis_units(
         preprocessing_manifest=preprocessing_manifest,
@@ -976,7 +1099,7 @@ def run_clinical_stage(context: PhaseContext) -> list[Path]:
         encoding_manifest=encoding_manifest,
         state_dictionary_path=context.run_root / "metrics" / "state-dictionary.joblib",
         profile_estimator_path=context.run_root / "metrics" / "profile-estimator.joblib",
-        clinical_lock_path=lock_value,
+        clinical_lock_path=lock_path,
         output_root=destination / "transfer",
         study=study,
     )
@@ -984,10 +1107,22 @@ def run_clinical_stage(context: PhaseContext) -> list[Path]:
         labels,
         encoder_inputs,
         issues,
+        clinical_inventory,
+        clinical_recording_flow,
+        clinical_channel_qc,
+        clinical_qc_audit,
         preprocessing_manifest,
         preprocessing_flow,
         encoding_manifest,
         encoding_flow,
+        *derivative_artifact_paths(
+            destination / "preprocess",
+            directories=("source-recordings", "units", "provenance"),
+        ),
+        *derivative_artifact_paths(
+            destination / "encode",
+            directories=("trajectories", "provenance"),
+        ),
         *transfer,
     ]
 

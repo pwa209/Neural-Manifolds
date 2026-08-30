@@ -10,6 +10,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy import stats
+
+from neural_manifolds.manifold.clinical_reference import WAKE_REGIME_LLR
 
 from .config import FigureConfig, FigureContract
 from .style import add_panel_label, apply_publication_style, figure_size
@@ -324,7 +327,7 @@ def render_figure_1(
         "multiaxial; never collapsed\nto a diagnostic score",
         transform=ax_axes.transAxes,
         fontsize=6,
-        color=config.palette["red"],
+        color=config.palette["dark"],
     )
     ax_axes.axis("off")
     add_panel_label(ax_axes, "b", font_size=float(config.export["panel_label_font_pt"]))
@@ -376,7 +379,8 @@ def render_figure_1(
     ax_coverage.set_yticks(
         range(len(displayed)), [_short(value, 22) for value in displayed["cohort"].astype(str)]
     )
-    ax_coverage.set_xlabel("individual participants")
+    ax_coverage.set_xticks([])
+    ax_coverage.set_xlabel("each dot = one biological participant")
     ax_coverage.invert_yaxis()
     add_panel_label(ax_coverage, "c", font_size=float(config.export["panel_label_font_pt"]))
     return RenderedFigure(fig, {"c": coverage})
@@ -561,6 +565,29 @@ def render_figure_4(
         on=["condition", "dataset_id", "participant_id", "biological_participant"],
         validate="one_to_one",
     )
+    delta_passive = _participant_values(
+        participants,
+        group_columns=["tms_contrast"],
+        value_column="passive_delta",
+    ).rename(columns={"passive_delta": "passive_delta_mean"})
+    delta_direct = _participant_values(
+        participants,
+        group_columns=["tms_contrast"],
+        value_column="direct_delta",
+    ).rename(columns={"direct_delta": "direct_delta_mean"})
+    delta = delta_passive.merge(
+        delta_direct[
+            [
+                "tms_contrast",
+                "dataset_id",
+                "participant_id",
+                "biological_participant",
+                "direct_delta_mean",
+            ]
+        ],
+        on=["tms_contrast", "dataset_id", "participant_id", "biological_participant"],
+        validate="one_to_one",
+    )
     direct_values = participant.rename(columns={"direct_response_mean": "value"})
     direct_summary = _summary(
         direct_values,
@@ -584,38 +611,34 @@ def render_figure_4(
     ax_scatter = fig.add_subplot(grid[:, 0])
     conditions = sorted(participant["condition"].astype(str).unique())
     colors = _category_colors(conditions, config.palette)
-    for condition in conditions:
-        part = participant.loc[participant["condition"].astype(str) == condition]
-        ax_scatter.scatter(
-            part["passive_reachability_mean"],
-            part["direct_response_mean"],
-            s=18,
-            color=colors[condition],
-            alpha=0.7,
-            label=f"{_short(condition)} (n={part['biological_participant'].nunique()})",
-        )
-    x_values = participant["passive_reachability_mean"].to_numpy(dtype=float)
-    y_values = participant["direct_response_mean"].to_numpy(dtype=float)
+    ax_scatter.scatter(
+        delta["passive_delta_mean"],
+        delta["direct_delta_mean"],
+        s=20,
+        color=config.palette["blue"],
+        alpha=0.75,
+        label=f"paired participants (n={delta['biological_participant'].nunique()})",
+    )
+    x_values = delta["passive_delta_mean"].to_numpy(dtype=float)
+    y_values = delta["direct_delta_mean"].to_numpy(dtype=float)
     if len(x_values) >= 2 and np.ptp(x_values) > 0:
         slope, intercept = np.polyfit(x_values, y_values, deg=1)
         x_line = np.linspace(float(x_values.min()), float(x_values.max()), 100)
         ax_scatter.plot(x_line, intercept + slope * x_line, color=config.palette["dark"], lw=1)
-        correlation = float(np.corrcoef(x_values, y_values)[0, 1])
+        correlation = float(pd.Series(x_values).corr(pd.Series(y_values), method="spearman"))
     else:
         correlation = float("nan")
     r_text = "undefined" if not np.isfinite(correlation) else f"{correlation:.2f}"
     ax_scatter.text(
         0.03,
         0.97,
-        "Pearson r="
-        f"{r_text}; N={participant['biological_participant'].nunique()}, "
-        f"observations={len(x_values)}",
+        f"Spearman rho={r_text}; n={delta['biological_participant'].nunique()} participants",
         transform=ax_scatter.transAxes,
         ha="left",
         va="top",
     )
-    ax_scatter.set_xlabel("passive reachability")
-    ax_scatter.set_ylabel("direct TMS response")
+    ax_scatter.set_xlabel("Delta passive reachability\n(awake - propofol)")
+    ax_scatter.set_ylabel("Delta direct TMS response\n(awake - propofol)")
     ax_scatter.legend(loc="lower right")
     add_panel_label(ax_scatter, "a", font_size=float(config.export["panel_label_font_pt"]))
 
@@ -654,13 +677,20 @@ def render_figure_4(
     ax_time.set_ylabel("trajectory response")
     ax_time.legend(ncol=min(3, len(conditions)))
     add_panel_label(ax_time, "c", font_size=float(config.export["panel_label_font_pt"]))
+    delta_source = delta.copy()
+    delta_source["association_test"] = "spearman_participant_level_condition_delta"
+    delta_source["spearman_rho"] = correlation
+    delta_source["descriptive_line"] = "ordinary_least_squares_no_causal_slope_claim"
     participant_source = participant.merge(
         direct_summary, on="condition", how="left", suffixes=("", "_direct_summary")
     )
     trajectory_source = trajectory_participant.merge(
         trajectory_summary, on=["condition", "time_ms"], how="left"
     )
-    return RenderedFigure(fig, {"a_b": participant_source, "c": trajectory_source})
+    return RenderedFigure(
+        fig,
+        {"a": delta_source, "b": participant_source, "c": trajectory_source},
+    )
 
 
 def render_figure_5(
@@ -677,8 +707,16 @@ def render_figure_5(
         priority=contract.display.get("contrast_priority", ()),
         maximum=int(contract.display.get("max_main_contrasts", 1)),
     )
+    display_analysis = {
+        "covariance_dwell_matched_state_space": "state-space null",
+        "post_encoder_latent_rotation_control": "latent rotation",
+        "blockwise_temporal_permutation": "block permutation",
+        "phase_randomization": "phase randomization",
+    }
     robustness["robustness_check"] = (
-        robustness["analysis"].astype(str) + " · " + robustness["metric"].astype(str)
+        robustness["analysis"].astype(str).replace(display_analysis)
+        + " · "
+        + robustness["metric"].astype(str)
     )
     candidates = robustness[robustness["contrast"].astype(str).isin(contrasts)].copy()
     analysis_priority = {
@@ -759,7 +797,7 @@ def render_figure_5(
             va="center",
             transform=ax_fmri.transAxes,
             fontsize=6,
-            color=config.palette["red"],
+            color=config.palette["dark"],
         )
         ax_fmri.axis("off")
         add_panel_label(ax_fmri, "b", font_size=float(config.export["panel_label_font_pt"]))
@@ -839,7 +877,7 @@ def render_figure_6(
             "diagnosis",
             "diagnosis_display",
             "crs_r_total",
-            "regime_preservation_score",
+            WAKE_REGIME_LLR,
             "source_artifact_sha256",
             "source_table_sha256",
         ],
@@ -906,7 +944,7 @@ def render_figure_6(
             as_index=False,
             sort=True,
             dropna=False,
-        )[["crs_r_total", "regime_preservation_score"]]
+        )[["crs_r_total", WAKE_REGIME_LLR]]
         .mean()
         .reset_index(drop=True)
     )
@@ -921,7 +959,7 @@ def render_figure_6(
     )
     finite_endpoint = np.isfinite(
         clinical_participant["crs_r_total"].to_numpy(dtype=float)
-    ) & np.isfinite(clinical_participant["regime_preservation_score"].to_numpy(dtype=float))
+    ) & np.isfinite(clinical_participant[WAKE_REGIME_LLR].to_numpy(dtype=float))
     clinical_participant["crs_r_available"] = finite_endpoint
     colors = _category_colors(diagnoses, config.palette)
     for diagnosis in diagnoses:
@@ -933,7 +971,7 @@ def render_figure_6(
             continue
         ax_crs.scatter(
             part["crs_r_total"],
-            part["regime_preservation_score"],
+            part[WAKE_REGIME_LLR],
             s=18,
             color=colors[diagnosis],
             alpha=0.7,
@@ -943,13 +981,13 @@ def render_figure_6(
         clinical_participant["displayed_in_main_figure"] & clinical_participant["crs_r_available"]
     ]
     crs = plotted_endpoint["crs_r_total"].to_numpy(dtype=float)
-    preservation = plotted_endpoint["regime_preservation_score"].to_numpy(dtype=float)
+    preservation = plotted_endpoint[WAKE_REGIME_LLR].to_numpy(dtype=float)
     if len(crs) >= 2 and np.ptp(crs) > 0:
         slope, intercept = np.polyfit(crs, preservation, deg=1)
         x_line = np.linspace(float(crs.min()), float(crs.max()), 100)
         ax_crs.plot(x_line, intercept + slope * x_line, color=config.palette["dark"], lw=1)
         correlation = (
-            float(np.corrcoef(crs, preservation)[0, 1])
+            float(stats.spearmanr(crs, preservation).statistic)
             if np.ptp(preservation) > 0
             else float("nan")
         )
@@ -961,7 +999,7 @@ def render_figure_6(
         endpoint_text = "CRS-R supplied for one participant; association not estimated"
     else:
         r_text = "undefined" if not np.isfinite(correlation) else f"{correlation:.2f}"
-        endpoint_text = f"Pearson r={r_text}; n={len(crs)}"
+        endpoint_text = f"Spearman rho={r_text}; n={len(crs)}"
     ax_crs.text(
         0.03,
         0.97,
@@ -972,14 +1010,14 @@ def render_figure_6(
         color=config.palette["neutral"] if len(crs) < 2 else config.palette["dark"],
     )
     ax_crs.set_xlabel("CRS-R total")
-    ax_crs.set_ylabel("regime-preservation score")
+    ax_crs.set_ylabel("wake vs propofol log-likelihood ratio")
     if ax_crs.get_legend_handles_labels()[0]:
         ax_crs.legend(loc="lower right")
     add_panel_label(ax_crs, "b", font_size=float(config.export["panel_label_font_pt"]))
 
     ax_heterogeneity = fig.add_subplot(grid[1, 5:])
     clinical_indexed = clinical.copy().sort_values(
-        ["regime_preservation_score", "dataset_id", "participant_id"],
+        [WAKE_REGIME_LLR, "dataset_id", "participant_id"],
         ascending=[False, True, True],
         kind="mergesort",
     )
@@ -1003,6 +1041,10 @@ def render_figure_6(
         how="left",
         validate="one_to_one",
     )
+    source_b["association_test"] = "spearman_participant_level"
+    source_b["spearman_rho"] = correlation
+    source_b["n_association"] = len(crs)
+    source_b["trend_line"] = "descriptive_least_squares_no_slope_inference"
     source_c = clinical_indexed.copy()
     source_c.insert(0, "display_order", np.arange(1, len(source_c) + 1))
     return RenderedFigure(fig, {"a": source_a, "b": source_b, "c": source_c})

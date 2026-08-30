@@ -30,9 +30,13 @@ class BoundaryCheckingEstimator(FiveAxisProfileEstimator):
     def profile(self, record: ManifoldRecord | dict[str, Any]) -> ManifoldProfile:
         assert isinstance(record, ManifoldRecord)
         trajectory = np.asarray(record.trajectory, dtype=float)
+        repertoire = np.asarray(record.repertoire_trajectory, dtype=float)
         segments = np.asarray(record.segment_ids)
         fine_segments = np.asarray(record.alignment_segment_ids)
         assert len(trajectory) == len(segments)
+        assert len(repertoire) == len(segments)
+        assert trajectory.shape[1] == 2
+        assert repertoire.shape[1] == 3
         assert np.array_equal(np.unique(segments), np.arange(len(np.unique(segments))))
         assert np.all(np.diff(segments) >= 0)
         assert np.array_equal(np.unique(fine_segments), np.arange(len(np.unique(fine_segments))))
@@ -95,7 +99,7 @@ def _build_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Any]:
             "sampling": SamplingConfig(
                 equalise_windows=True,
                 repeats=3,
-                reliability_seconds=[2, 3, 99],
+                reliability_seconds=[3, 4, 199],
             )
         }
     )
@@ -207,21 +211,45 @@ def test_sampling_is_deterministic_matched_and_boundary_safe(tmp_path: Path) -> 
     assert equal["matched_coarse_windows"].nunique() == 1
     assert equal["matched_fine_windows"].nunique() == 1
     assert set(equal["matched_segments"]) == {3}
+    assert set(equal["pretraining_overlap_status"]) == {"unresolved"}
+    assert not equal["zero_shot_verified"].any()
+
+    averaged = pd.read_parquet(first[1])
+    assert set(averaged["pretraining_overlap_status"]) == {"unresolved"}
+    assert not averaged["zero_shot_verified"].any()
 
     reliability = repeats[repeats["analysis"] == "reliability"]
-    assert set(reliability["duration_seconds"]) == {2.0, 3.0}
+    assert set(reliability["duration_seconds"]) == {3.0, 4.0}
     assert np.all(reliability["matched_effective_seconds"] >= reliability["duration_seconds"])
     curves = pd.read_parquet(first[2])
     assert len(curves) == 2 * 2 * 5
     assert set(curves["status"]).issubset({"available", "unavailable"})
+    assert set(curves["pretraining_overlap_status"]) == {"unresolved"}
+    assert not curves["zero_shot_verified"].any()
 
     audit = json.loads(first[3].read_text(encoding="utf-8"))
     assert audit["state_dictionary_refit"] is False
     assert audit["profile_estimator_refit"] is False
+    assert audit["profile_input_spaces"] == {
+        "repertoire": {
+            "record_field": "repertoire_trajectory",
+            "space": "untruncated_frozen_encoder_embedding",
+            "dimension": 3,
+            "discovery_projection_applied": False,
+        },
+        "dynamics": {
+            "record_field": "trajectory",
+            "space": "discovery_fitted_pca_projection",
+            "dimension": 2,
+            "discovery_projection_applied": True,
+        },
+    }
     assert audit["scientific_gate_applied"] is False
+    assert audit["pretraining_overlap"]["pretraining_overlap_status"] == "unresolved"
+    assert audit["pretraining_overlap"]["zero_shot_verified"] is False
     assert any("every contrast arm" in row.get("reason", "") for row in audit["rows"])
     assert any(
-        row.get("duration_seconds") == 99.0 and row["status"] == "unavailable"
+        row.get("duration_seconds") == 199.0 and row["status"] == "unavailable"
         for row in audit["rows"]
     )
 

@@ -21,10 +21,10 @@ classification.
 ## Repository policy
 
 - Raw data are never committed and are acquired directly onto canonical NAS storage.
-- Source, configuration, checksums, manifests, and reviewed aggregate source data
-  are versioned in GitHub. Participant-level derivatives and durable logs stay on
-  approved university storage; credentials and identifiable/window-level raw data
-  are never committed.
+- Source, configuration, checksum metadata, manifests, roadmap, and operational
+  status are versioned in GitHub. Raw data, derived data, participant-level or
+  aggregate analysis tables, model caches, and durable logs stay on approved
+  university storage; credentials are never committed.
 - Every phase is restartable and writes an atomic completion record only after its
   declared outputs validate.
 - Participant identifiers, never windows or trials, define train/test boundaries.
@@ -83,7 +83,9 @@ The pinned Python 3.11/CUDA 12.6 server lock is
 
 ## Status
 
-The local implementation is integrated and the exact server roots are confirmed,
-but deployment and acquisition have not yet completed and no external-data result
-exists. Dataset- and fMRI-specific prerequisites remain explicit; see `STATUS.md`
-for the current boundary.
+The exact server roots, pinned runtime, and acquisition-safe source deployment are
+confirmed. Direct-to-NAS acquisition is running; no external dataset has been
+analysed. The scientifically hardened execution tree has passed local verification
+and is being frozen for exact server deployment before later phases are queued.
+Dataset- and fMRI-specific prerequisites remain explicit; see `STATUS.md` for the
+current boundary.

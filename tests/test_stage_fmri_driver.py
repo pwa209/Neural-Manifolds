@@ -28,7 +28,7 @@ models:
     manifest_audit = tmp_path / "manifest-audit.json"
     for path in (atlas, coordinates, manifest, manifest_audit):
         path.write_text(path.name, encoding="utf-8")
-    analysis = tuple(tmp_path / f"analysis-{index}.bin" for index in range(4))
+    analysis = tuple(tmp_path / f"analysis-{index}.bin" for index in range(7))
     for path in analysis:
         path.write_text(path.name, encoding="utf-8")
     calls: dict[str, object] = {}

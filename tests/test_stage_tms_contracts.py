@@ -12,6 +12,7 @@ import pytest
 
 from neural_manifolds.config import load_study
 from neural_manifolds.preprocessing import tms as preprocessing_tms
+from neural_manifolds.provenance import sha256_file
 from neural_manifolds.stages import tms as tms_stage
 
 
@@ -166,6 +167,8 @@ def test_tms_pulse_interpolation_precedes_filter_and_epoch_and_runs_once(
     )
     monkeypatch.setattr(tms_stage, "infer_mains_frequency", lambda _raw: 50.0)
     labels = tmp_path / "labels.parquet"
+    source = tmp_path / "unused.vhdr"
+    source.write_text("TMS source-lineage fixture\n", encoding="utf-8")
     pd.DataFrame(
         [
             {
@@ -174,7 +177,7 @@ def test_tms_pulse_interpolation_precedes_filter_and_epoch_and_runs_once(
                 "dataset_id": "propofol_tms_eeg",
                 "modality": "tms-eeg",
                 "condition": "awake",
-                "source_path": "unused.vhdr",
+                "source_path": str(source),
             }
         ]
     ).to_parquet(labels, index=False)
@@ -190,17 +193,62 @@ def test_tms_pulse_interpolation_precedes_filter_and_epoch_and_runs_once(
     assert calls.index("continuous_pulse_interpolation") < calls.index("epoch")
     assert calls.index("filter") < calls.index("epoch")
     assert len(pd.read_parquet(manifest_path)) == 1
+    manifest = pd.read_parquet(manifest_path).iloc[0]
+    assert manifest["source_path"] == str(source.resolve(strict=True))
+    assert json.loads(manifest["channel_order_json"]) == ["Cz", "Pz"]
+    assert manifest["pulse_trials_total"] == 2
+    assert manifest["pulse_trials_retained"] == 2
+    assert manifest["pulse_trials_rejected"] == 0
+    epochs, _, channels = tms_stage._load_epochs(
+        Path(manifest["epochs_path"]),
+        expected_sha256=manifest["epochs_sha256"],
+        expected_channel_order=("Cz", "Pz"),
+    )
+    assert epochs.shape[0] == 2
+    assert channels == ("Cz", "Pz")
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["pulse_interpolation_domain"] == ("continuous_eeg_before_filtering_and_epoching")
+    assert audit["general_encoder_status"] == ("omitted_requires_dedicated_tms_preprocessing")
+    assert audit["ica_status"] == "not_implemented"
+    assert audit["ica_execution_status"] == (
+        "not_executed_no_validated_two_pass_component_selection"
+    )
+    assert audit["ssp_execution_status"] == ("not_executed_no_validated_tms_projector_definition")
+    assert audit["epoch_archives_include_channel_order"] is True
+    assert audit["raw_lineage_retained"] is True
+    channel_provenance = pd.read_parquet(audit["channel_provenance"]["path"])
+    trial_provenance = pd.read_parquet(audit["trial_provenance"]["path"])
+    trial_channel_qc = pd.read_parquet(audit["trial_channel_early_burden"]["path"])
+    assert len(channel_provenance) == 2
+    assert set(channel_provenance["canonical_channel_name"]) == {"Cz", "Pz"}
+    assert len(trial_provenance) == 2
+    assert set(trial_provenance["trial_status"]) == {"retained"}
+    assert set(trial_provenance["epoch_constructor_status"]) == {"unavailable_drop_log_not_exposed"}
+    assert trial_provenance["retained_archive_index"].tolist() == [0, 1]
+    assert len(trial_channel_qc) == 4
+    assert set(trial_channel_qc["trial_status"]) == {"retained"}
+    assert manifest["auxiliary_channel_status"] == "unavailable_channel_type_metadata"
+    assert not bool(manifest["ica_executed"])
+    assert not bool(manifest["ssp_executed"])
+    assert manifest["early_post_pulse_interval_seconds"] == "[0.02,0.05]"
+    assert audit["scientific_gate_applied"] is False
 
 
-def _write_epoch_archive(path: Path, marker: float) -> None:
+def _write_epoch_archive(
+    path: Path,
+    marker: float,
+    *,
+    channels: tuple[str, ...] = ("F3", "Cz", "Pz"),
+    trials: int = 2,
+) -> str:
     times = np.linspace(-0.5, 1.0, 9)
     np.savez_compressed(
         path,
-        epochs=np.full((2, 3, len(times)), marker, dtype=np.float64),
+        epochs=np.full((trials, len(channels), len(times)), marker, dtype=np.float64),
         times_seconds=times,
+        channel_names=np.asarray(channels, dtype="U"),
     )
+    return sha256_file(path)
 
 
 def test_tms_linkage_excludes_direct_acquisition_and_correlates_participant_deltas(
@@ -220,12 +268,18 @@ def test_tms_linkage_excludes_direct_acquisition_and_correlates_participant_delt
         }
         for condition, (direct_value, passive_value) in condition_values.items():
             archive = tmp_path / f"{participant}-{condition}.npz"
-            _write_epoch_archive(archive, direct_value)
+            archive_sha256 = _write_epoch_archive(archive, direct_value)
             manifest_rows.append(
                 {
+                    "unit_id": f"{participant}-{condition}",
                     "participant_id": participant,
                     "condition": condition,
                     "epochs_path": str(archive),
+                    "epochs_sha256": archive_sha256,
+                    "channel_order_json": json.dumps(["F3", "Cz", "Pz"]),
+                    "pulse_trials_total": 3,
+                    "pulse_trials_retained": 2,
+                    "pulse_trials_rejected": 1,
                 }
             )
             # Two passive runs must collapse to one participant-condition predictor.
@@ -288,6 +342,14 @@ def test_tms_linkage_excludes_direct_acquisition_and_correlates_participant_delt
 
     monkeypatch.setattr(tms_stage, "fit_shared_perturbational_trajectories", fake_trajectories)
     monkeypatch.setattr(tms_stage, "trajectory_outcomes", fake_outcomes)
+    monkeypatch.setattr(
+        tms_stage,
+        "conventional_tms_eeg_outcomes",
+        lambda epochs, _times, **_kwargs: {
+            **{outcome: float(np.mean(epochs)) for outcome in tms_stage.CONVENTIONAL_TMS_OUTCOMES},
+            "sensor_propagation_status": "available_sensor_level_temporal_spread",
+        },
+    )
 
     outcomes_path, associations_path, _trajectory_path, audit_path = tms_stage.run_tms_validation(
         tms_manifest=manifest_path,
@@ -304,12 +366,131 @@ def test_tms_linkage_excludes_direct_acquisition_and_correlates_participant_delt
         assert participant.loc["propofol_sedation", "reachability"] == pytest.approx(passive_base)
 
     associations = pd.read_parquet(associations_path)
-    assert len(associations) == 4
+    assert len(associations) == len(tms_stage.DIRECT_TRAJECTORY_OUTCOMES) + len(
+        tms_stage.CONVENTIONAL_TMS_OUTCOMES
+    )
+    assert set(associations["outcome"]) == set(tms_stage.DIRECT_TRAJECTORY_OUTCOMES) | set(
+        tms_stage.CONVENTIONAL_TMS_OUTCOMES
+    )
     assert set(associations["n_participants"]) == {5}
     assert np.allclose(associations["estimate"], 1.0)
+    assert set(associations["status"]) == {"available"}
     assert set(associations["contrast"]) == {"awake_minus_propofol_sedation"}
     assert set(associations["test"]) == {"spearman_participant_level_within_condition_delta"}
+    assert set(outcomes["source_run_count"]) == {1}
+    assert set(outcomes["pulse_trials_total"]) == {3}
+    assert set(outcomes["pulse_trials_retained"]) == {2}
+    assert set(outcomes["pulse_trials_rejected"]) == {1}
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["passive_profile_rule"]["acquisition_excluded"] == "tms"
     assert audit["association_unit"] == ("participant_awake_minus_propofol_sedation_delta")
     assert audit["pulse_interpolation_repeated_after_filtering"] is False
+    assert audit["epoch_archive_sha256_verified_before_load"] is True
+    assert audit["repeated_condition_runs_concatenated_before_trial_matching"] is True
+    assert audit["association_rows_expected"] == len(associations)
+
+
+def test_tms_epoch_loader_rejects_hash_and_channel_order_tampering(tmp_path: Path) -> None:
+    archive = tmp_path / "epochs.npz"
+    digest = _write_epoch_archive(archive, 1.0)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        tms_stage._load_epochs(
+            archive,
+            expected_sha256="0" * 64,
+            expected_channel_order=("F3", "Cz", "Pz"),
+        )
+    with pytest.raises(ValueError, match="channel order mismatch"):
+        tms_stage._load_epochs(
+            archive,
+            expected_sha256=digest,
+            expected_channel_order=("Pz", "Cz", "F3"),
+        )
+
+
+def test_tms_repeated_condition_runs_are_concatenated_before_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_rows: list[dict[str, Any]] = []
+    for condition, base in (("awake", 10.0), ("propofol_sedation", 2.0)):
+        for run_index, trials in enumerate((2, 3), start=1):
+            archive = tmp_path / f"{condition}-run-{run_index}.npz"
+            digest = _write_epoch_archive(archive, base + run_index, trials=trials)
+            manifest_rows.append(
+                {
+                    "unit_id": f"p1-{condition}-run-{run_index}",
+                    "participant_id": "p1",
+                    "condition": condition,
+                    "epochs_path": str(archive),
+                    "epochs_sha256": digest,
+                    "channel_order_json": json.dumps(["F3", "Cz", "Pz"]),
+                    "pulse_trials_total": trials + 1,
+                    "pulse_trials_retained": trials,
+                    "pulse_trials_rejected": 1,
+                }
+            )
+    manifest_path = tmp_path / "manifest.parquet"
+    pd.DataFrame(manifest_rows).to_parquet(manifest_path, index=False)
+    profiles_path = tmp_path / "profiles.parquet"
+    pd.DataFrame(
+        [
+            {
+                "participant_id": "p1",
+                "condition": condition,
+                "dataset_id": "propofol_tms_eeg",
+                "modality": "eeg",
+                "acquisition": "rest",
+                "reachability": value,
+            }
+            for condition, value in (("awake", 1.0), ("propofol_sedation", 0.5))
+        ]
+    ).to_parquet(profiles_path, index=False)
+    observed_trials: dict[str, int] = {}
+
+    def fake_trajectories(
+        conditions: dict[str, np.ndarray],
+        times: np.ndarray,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        observed_trials.update({name: value.shape[0] for name, value in conditions.items()})
+        return {
+            name: SimpleNamespace(
+                marker=float(np.mean(values)),
+                mean_trajectory=np.zeros((len(times), 2)),
+                baseline_centroid=np.zeros(2),
+            )
+            for name, values in conditions.items()
+        }
+
+    monkeypatch.setattr(tms_stage, "fit_shared_perturbational_trajectories", fake_trajectories)
+    monkeypatch.setattr(
+        tms_stage,
+        "trajectory_outcomes",
+        lambda trajectory, _times, **_kwargs: {
+            "maximum_displacement": trajectory.marker,
+            "occupied_log_volume": trajectory.marker,
+            "spatial_differentiation": trajectory.marker,
+            "recovery_half_time_seconds": trajectory.marker,
+        },
+    )
+
+    outcomes_path, associations_path, *_ = tms_stage.run_tms_validation(
+        tms_manifest=manifest_path,
+        profiles_path=profiles_path,
+        output_root=tmp_path / "out",
+        study=_test_study(),
+    )
+
+    assert observed_trials == {"awake": 5, "propofol_sedation": 5}
+    outcomes = pd.read_parquet(outcomes_path)
+    assert set(outcomes["source_run_count"]) == {2}
+    assert set(outcomes["pulse_trials_total"]) == {7}
+    assert set(outcomes["pulse_trials_retained"]) == {5}
+    assert set(outcomes["pulse_trials_rejected"]) == {2}
+    associations = pd.read_parquet(associations_path)
+    assert len(associations) == len(tms_stage.DIRECT_TRAJECTORY_OUTCOMES) + len(
+        tms_stage.CONVENTIONAL_TMS_OUTCOMES
+    )
+    assert set(associations["test"]) == {"spearman_participant_level_within_condition_delta"}
+    assert set(associations["status"]) == {
+        "unavailable_fewer_than_five_complete_participant_deltas"
+    }

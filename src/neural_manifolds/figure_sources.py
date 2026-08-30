@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from neural_manifolds.manifold.clinical_reference import WAKE_REGIME_LLR
 from neural_manifolds.manifold.profile import AXIS_NAMES
 from neural_manifolds.provenance import sha256_file
 
@@ -325,22 +326,46 @@ def prepare_clinical_figure_source(
     source = Path(clinical_profiles_path).resolve(strict=True)
     source_hash = sha256_file(source)
     frame = pd.read_parquet(source)
-    required = {"participant_id", "dataset_id", "diagnosis", *AXIS_NAMES}
+    if WAKE_REGIME_LLR not in frame:
+        raise ValueError(
+            "clinical profiles lack the frozen healthy wake-versus-propofol "
+            "log-likelihood ratio; the figure source builder will not derive or impute it"
+        )
+    required = {
+        "participant_id",
+        "dataset_id",
+        "diagnosis",
+        WAKE_REGIME_LLR,
+        "wake_regime_score_status",
+        *AXIS_NAMES,
+    }
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"clinical profiles lack figure columns {sorted(missing)}")
-    columns = ["participant_id", "dataset_id", "diagnosis", *AXIS_NAMES]
-    for optional in ("crs_r_total", "regime_preservation_score"):
+    columns = [
+        "participant_id",
+        "dataset_id",
+        "diagnosis",
+        WAKE_REGIME_LLR,
+        "wake_regime_score_status",
+        *AXIS_NAMES,
+    ]
+    for optional in (
+        "crs_r_total",
+        "analysis_branch",
+        "property_scope_json",
+        "spatial_regions",
+    ):
         if optional in frame:
             columns.append(optional)
     clinical = frame[columns].rename(columns=AXIS_LETTERS)
     if "crs_r_total" not in clinical:
         clinical["crs_r_total"] = np.nan
-    if "regime_preservation_score" not in clinical:
-        raise ValueError(
-            "clinical profiles lack the locked regime_preservation_score; "
-            "the figure source builder will not derive a replacement endpoint"
-        )
+    clinical["crs_r_status"] = np.where(
+        pd.to_numeric(clinical["crs_r_total"], errors="coerce").notna(),
+        "available",
+        "unavailable_not_supplied_by_release",
+    )
     clinical["source_artifact_sha256"] = source_hash
     destination = Path(output_root)
     _write(clinical, destination / "clinical_profiles.parquet")
@@ -456,6 +481,43 @@ def prepare_figure_sources(
             "reachability": "passive_reachability",
             "maximum_displacement": "direct_response",
         }
+    )
+    condition_order = ("awake", "propofol_sedation")
+    participants = (
+        participants[participants["condition"].isin(condition_order)]
+        .groupby(["participant_id", "condition"], as_index=False)[
+            ["passive_reachability", "direct_response"]
+        ]
+        .mean()
+    )
+    candidate_participants = set(participants["participant_id"].astype(str))
+    passive_wide = participants.pivot(
+        index="participant_id", columns="condition", values="passive_reachability"
+    )
+    direct_wide = participants.pivot(
+        index="participant_id", columns="condition", values="direct_response"
+    )
+    required_conditions = set(condition_order)
+    if not required_conditions <= set(passive_wide) or not required_conditions <= set(direct_wide):
+        raise ValueError("TMS figure requires paired awake and propofol_sedation observations")
+    deltas = pd.DataFrame(
+        {
+            "passive_delta": passive_wide["awake"] - passive_wide["propofol_sedation"],
+            "direct_delta": direct_wide["awake"] - direct_wide["propofol_sedation"],
+        }
+    ).dropna()
+    paired_participants = set(deltas.index.astype(str))
+    if paired_participants != candidate_participants:
+        missing = sorted(candidate_participants - paired_participants)
+        raise ValueError(
+            "TMS figure refuses incomplete within-participant condition pairs: "
+            + ", ".join(missing)
+        )
+    if len(deltas) < 2:
+        raise ValueError("TMS figure needs at least two participants with paired condition deltas")
+    deltas["tms_contrast"] = "awake_minus_propofol_sedation"
+    participants = participants.merge(
+        deltas.reset_index(), on="participant_id", how="inner", validate="many_to_one"
     )
     participants["dataset_id"] = "propofol_tms_eeg"
     participants["source_artifact_sha256"] = tms_hash

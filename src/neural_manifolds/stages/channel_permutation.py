@@ -856,6 +856,7 @@ def _profile_source(
         trajectory=projected,
         states=states,
         regional_trajectories=source.regional,
+        repertoire_trajectory=source.trajectory,
         segment_ids=source.segment_ids,
         alignment_segment_ids=source.alignment_segment_ids,
         name=source.profile_id,
@@ -1324,6 +1325,20 @@ def run_preencoder_channel_permutation_control(
             "profile_estimator": str(estimator_path),
             "profile_estimator_sha256": estimator_hash,
             "profile_estimator_refit": False,
+            "profile_input_spaces": {
+                "repertoire": {
+                    "record_field": "repertoire_trajectory",
+                    "space": "untruncated_frozen_encoder_embedding",
+                    "dimension": int(dictionary.projection.n_features_in_),
+                    "discovery_projection_applied": False,
+                },
+                "dynamics": {
+                    "record_field": "trajectory",
+                    "space": "discovery_fitted_pca_projection",
+                    "dimension": int(dictionary.projection.n_components_),
+                    "discovery_projection_applied": True,
+                },
+            },
             "minimum_event_trials": event_minimum,
             "event_trials_encoded_independently": True,
             "event_transitions_cross_boundaries": False,
