@@ -20,20 +20,18 @@ analyses after results are seen.
 The compute endpoint has been read-only preflighted as
 `wangpeng@kemove-Rack-Server` through local SSH port `1022`. It has an NVIDIA H100
 80-GB GPU, `tmux`, and `rsync`, but no detected Slurm installation. The three
-project-specific roots have **not** been confirmed. Accordingly,
-`configs/server.yaml` deliberately contains null roots and no remote mutation or
-queue launch is ready to authorize until the user supplies all three exact values:
+project-specific roots have now been confirmed and recorded in
+`configs/server.yaml`:
 
-| Role | Required parent | Purpose |
+| Role | Confirmed root | Purpose |
 |---|---|---|
-| Canonical | `/private_nas/wangpeng` | immutable raw releases, licences, acquisition manifests, snapshots |
-| Work | `/data1/wangpeng` | source releases, environments, caches, preprocessing, embeddings, metrics, models, figures |
-| Checkpoint | `/data2/wangpeng` | queue state, attempt receipts, restart markers, durable logs |
+| Canonical | `/private_nas/wangpeng/neural-manifolds` | immutable raw releases, licences, acquisition manifests, snapshots |
+| Work | `/data1/wangpeng/neural-manifolds-work` | source releases, environments, caches, preprocessing, embeddings, metrics, models, figures |
+| Checkpoint | `/data2/wangpeng/neural-manifolds-checkpoints` | queue state, attempt receipts, restart markers, durable logs |
 
-Each root must be one direct, project-specific child of its parent. Scripts reject
-the parent itself, nested guesses, relative paths, and a root copied from another
-project. Once confirmed, record the exact values in `configs/server.yaml` and pass
-the same values explicitly to every remote script.
+Each root is one direct, project-specific child of its parent. Scripts reject the
+parent itself, nested guesses, relative paths, and a root copied from another
+project. Pass these exact configured values explicitly to every remote script.
 
 ## Reproducible storage contract
 
@@ -472,13 +470,9 @@ No server deployment, queue launch, or real-data acquisition has started. The
 reviewed Python 3.11/CUDA 12.6 lock and BrainLM revision/file hashes are already
 pinned; they are not remaining prerequisites.
 
-The reviewed initial implementation is now published on GitHub. Remaining global
-launch prerequisites are:
-
-1. User confirmation of the exact canonical, work, and checkpoint project roots,
-   followed by recording the same three values in `configs/server.yaml`.
-2. Selection of the exact published commit for content-addressed deployment after
-   the server-root values are recorded.
+The reviewed initial implementation is published on GitHub and the confirmed roots
+are recorded. The remaining global launch prerequisite is selection of the exact
+published commit for content-addressed deployment.
 
 External dataset/phase blockers and limitations remain explicit:
 

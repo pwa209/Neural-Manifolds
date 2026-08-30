@@ -12,12 +12,12 @@ Every mutating command requires all three **user-confirmed, project-specific**
 roots. The scripts deliberately refuse the broad storage parents and do not infer
 a Neural Manifolds path from any other project:
 
-- canonical/raw NAS: one direct child of `/private_nas/wangpeng`;
-- active work: one direct child of `/data1/wangpeng`;
-- restart markers/logs: one direct child of `/data2/wangpeng`.
+- canonical/raw NAS: `/private_nas/wangpeng/neural-manifolds`;
+- active work: `/data1/wangpeng/neural-manifolds-work`;
+- restart markers/logs: `/data2/wangpeng/neural-manifolds-checkpoints`.
 
-Until those exact roots are confirmed and recorded in `configs/server.yaml`, stop
-after local source preparation. The safe remote sequence is:
+These exact roots are confirmed and recorded in `configs/server.yaml`. The safe
+remote sequence is:
 
 1. `preflight.sh` (read-only);
 2. `bootstrap.sh --check-only`, then `bootstrap.sh --apply`;
@@ -79,8 +79,8 @@ The model bootstrap exports `NEURAL_MANIFOLDS_MODEL_MANIFEST`, LaBraM source and
 checkpoint paths, BrainLM source, and—only after the fMRI bootstrap—the BrainLM
 checkpoint directory. The queue rehashes these files before model-dependent phases.
 
-Remaining external blockers are concrete rather than scientific: the three exact
-server roots; the approved UKB_424 atlas and ordered coordinates; the explicit
+Remaining external blockers are concrete rather than scientific: the approved
+UKB_424 atlas and ordered coordinates; the explicit
 `ds006623` timing-index origin; Cogitate account access and native event schema;
 official clinical label availability; and the possibility that the `ds006623`
 git-annex special remote cannot serve required content. The BrainLM revision and

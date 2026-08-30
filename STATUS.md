@@ -12,8 +12,9 @@ derived arrays will remain on the university storage system.
   boundaries; external-data execution remains unstarted.
 - GitHub synchronization: validated implementation published on `main`; the local
   branch tracks `origin/main`.
-- Server roots: the exact canonical, work, and checkpoint project directories are
-  still unconfirmed.
+- Server roots: confirmed as `/private_nas/wangpeng/neural-manifolds`,
+  `/data1/wangpeng/neural-manifolds-work`, and
+  `/data2/wangpeng/neural-manifolds-checkpoints`.
 - Server deployment: not yet started.
 - Acquisition queue: not yet started.
 - External-data results: none.
@@ -48,8 +49,6 @@ The server dependency lock SHA-256 is
 
 ## Unresolved execution inputs
 
-- User confirmation of all three exact project roots: canonical NAS, active work,
-  and checkpoint/log storage.
 - The exact approved UKB_424 atlas, its ordered 424-row coordinate table, and the
   explicit 0- or 1-based origin of the `ds006623` LOR/ROR timing index.
 - Cogitate account approval/download access and a snapshot of its native BIDS event

@@ -83,7 +83,7 @@ The pinned Python 3.11/CUDA 12.6 server lock is
 
 ## Status
 
-The local implementation is integrated, but it has not been deployed or queued on
-the university server, no external dataset has been downloaded by this project, and
-no external-data result exists. Exact server roots and dataset/fMRI prerequisites
-remain unresolved; see `STATUS.md` for the current boundary.
+The local implementation is integrated and the exact server roots are confirmed,
+but deployment and acquisition have not yet completed and no external-data result
+exists. Dataset- and fMRI-specific prerequisites remain explicit; see `STATUS.md`
+for the current boundary.

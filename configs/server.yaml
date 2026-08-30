@@ -9,14 +9,13 @@ identity:
   ssh_host: 127.0.0.1
   ssh_port: 1022
 
-# Intentionally unresolved.  Record the three project-specific roots only after
-# the user confirms them.  Bootstrap, deployment, and queue scripts also require
-# the same values as explicit arguments and fail if configuration and arguments
-# differ; no project directory is inferred from another project's layout.
+# User-confirmed project-specific roots. Bootstrap, deployment, and queue scripts
+# require the same values as explicit arguments and fail if configuration and
+# arguments differ; no project directory is inferred from another project.
 storage:
-  canonical_root: null
-  work_root: null
-  checkpoint_root: null
+  canonical_root: /private_nas/wangpeng/neural-manifolds
+  work_root: /data1/wangpeng/neural-manifolds-work
+  checkpoint_root: /data2/wangpeng/neural-manifolds-checkpoints
   raw_subdirectory: raw
   raw_data_location: canonical_only
   immutable_raw: true

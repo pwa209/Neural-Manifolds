@@ -5,7 +5,7 @@ from neural_manifolds.cli import validate_configs
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_validate_configs_allows_unresolved_roots_locally() -> None:
+def test_validate_configs_reports_confirmed_roots() -> None:
     result = validate_configs(
         ROOT / "configs" / "study.yaml",
         ROOT / "configs" / "datasets.yaml",
@@ -13,4 +13,4 @@ def test_validate_configs_allows_unresolved_roots_locally() -> None:
     )
     assert result["valid"] is True
     assert result["scientific_gates"] is False
-    assert result["unresolved_server_roots"]
+    assert result["unresolved_server_roots"] == []
