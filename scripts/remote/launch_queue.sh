@@ -75,7 +75,25 @@ if actual != expected:
     raise SystemExit(f"deployed source import mismatch: expected={expected}, actual={actual}")
 ' "$repo_root"
 
+# A long-lived tmux server keeps the environment from the moment that server was
+# created; it does not reliably inherit later client exports. Prefix the queued
+# command with every required, reviewed runtime value so detached execution uses
+# the same deployed source and verified model paths as check-only/dry-run.
+runtime_environment=(env "PYTHONPATH=$PYTHONPATH")
+for variable_name in \
+  NEURAL_MANIFOLDS_MODEL_MANIFEST \
+  NEURAL_MANIFOLDS_LABRAM_SOURCE \
+  NEURAL_MANIFOLDS_LABRAM_CHECKPOINT \
+  NEURAL_MANIFOLDS_BRAINLM_SOURCE \
+  NEURAL_MANIFOLDS_BRAINLM_CHECKPOINT_DIR \
+  NEURAL_MANIFOLDS_BRAINLM_LICENSE; do
+  if [[ -v "$variable_name" ]]; then
+    runtime_environment+=("$variable_name=${!variable_name}")
+  fi
+done
+
 command=(
+  "${runtime_environment[@]}"
   "$python_bin" -s -P -m workflow.queue
   --repo-root "$repo_root"
   --canonical-root "$canonical_root"
@@ -115,12 +133,19 @@ install -d -m 2770 -- "$state_root"
 tmux_log="$state_root/tmux.log"
 command_string="$(shell_join "${command[@]}")"
 printf -v quoted_log '%q' "$tmux_log"
-tmux new-session -d -s "$session" "exec ${command_string} >>${quoted_log} 2>&1"
-tmux has-session -t "=$session" || die "tmux session disappeared immediately; inspect $tmux_log"
-pane_pid="$(tmux display-message -p -t "=$session" '#{pane_pid}')"
+pane_pid="$(tmux new-session -d -P -F '#{pane_pid}' -s "$session" \
+  "exec ${command_string} >>${quoted_log} 2>&1")" || \
+  die "tmux could not create queue session; inspect $tmux_log"
+[[ "$pane_pid" =~ ^[0-9]+$ ]] || die "tmux returned an invalid pane PID: $pane_pid"
 printf '{"schema_version":1,"session":"%s","pane_pid":%s,"log":"%s"}\n' \
   "$session" "$pane_pid" "$tmux_log" | atomic_write_from_stdin "$state_root/launch.json"
 note "tmux_session=$session"
 note "pane_pid=$pane_pid"
 note "queue_log=$tmux_log"
 note "state_root=$state_root"
+if tmux has-session -t "=$session" 2>/dev/null; then
+  note "queue_session_active=true"
+else
+  note "queue_session_active=false"
+  note "queue process finished before the post-launch probe; inspect status and log"
+fi

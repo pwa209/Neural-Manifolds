@@ -52,9 +52,13 @@ def test_phase_command_uses_dispatcher_contract(tmp_path: Path) -> None:
 def test_remote_launcher_pins_imports_to_selected_release() -> None:
     launcher = Path("scripts/remote/launch_queue.sh").read_text(encoding="utf-8")
     assert 'export PYTHONPATH="$repo_root/src:$repo_root"' in launcher
+    assert 'runtime_environment=(env "PYTHONPATH=$PYTHONPATH")' in launcher
+    assert '"${runtime_environment[@]}"' in launcher
     assert '"$python_bin" -s -P -m workflow.queue' in launcher
     assert "import neural_manifolds.cli" in launcher
     assert "import workflow.queue" in launcher
+    assert "tmux new-session -d -P -F '#{pane_pid}'" in launcher
+    assert '[[ "$pane_pid" =~ ^[0-9]+$ ]]' in launcher
     assert "cli_bin=" not in launcher
 
 
