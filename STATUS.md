@@ -1,8 +1,8 @@
 # Project status
 
-This file records source and orchestration state only. No external dataset has yet
-been downloaded or analysed by this project. Raw data and derived arrays remain on
-the university storage system and are never committed here.
+This file records source and orchestration state only. Direct NAS acquisition is in
+progress; no external dataset has been analysed. Raw data and derived arrays remain
+on the university storage system and are never committed here.
 
 ## Current state
 
@@ -17,9 +17,9 @@ the university storage system and are never committed here.
   `/data1/wangpeng/neural-manifolds-work`, and
   `/data2/wangpeng/neural-manifolds-checkpoints`.
 - Server deployment: exact pushed commit
-  `8e382c05491eb0145d9390f15142952c13ee72ad` was deployed through the verified
+  `9c3ccf71cf474bb1fb00b62318cb5be200f379be` was deployed through the verified
   local-archive fallback at
-  `/data1/wangpeng/neural-manifolds-work/source/releases/8e382c05491eb0145d9390f15142952c13ee72ad`.
+  `/data1/wangpeng/neural-manifolds-work/source/releases/9c3ccf71cf474bb1fb00b62318cb5be200f379be`.
   The archive SHA-256 and full source manifest were independently verified before
   publication.
 - Server runtime: the lock-addressed Python 3.11 environment at
@@ -27,7 +27,11 @@ the university storage system and are never committed here.
   completed with exit code 0. PyTorch `2.13.0+cu126` passed an H100 CUDA matrix
   smoke test. Bootstrap log:
   `/data2/wangpeng/neural-manifolds-checkpoints/logs/bootstrap-runtime-8e382c05491eb0145d9390f15142952c13ee72ad.log`.
-- Acquisition queue: not yet started.
+- Acquisition queue: running under `acq-20260830-9c3ccf7`. Audit attempt 1
+  succeeded with four independently rehashed artifacts. Direct NAS acquisition
+  attempt 1 is active in tmux session
+  `neural-manifolds-acq-20260830-9c3ccf7` (pane PID `2525228`). Queue state and log:
+  `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7`.
 - External-data results: none.
 
 ## Integrated execution contract
@@ -87,3 +91,9 @@ Each server run writes a machine-readable record under the configured restart ro
 This file should be updated only with high-level state, source commit, run ID, tmux
 session/job identifier, and log location. Never paste raw data, secrets, or subject
 identifiers here.
+
+- Acquisition/provenance run: `acq-20260830-9c3ccf7`
+- Source commit: `9c3ccf71cf474bb1fb00b62318cb5be200f379be`
+- tmux session: `neural-manifolds-acq-20260830-9c3ccf7`
+- Queue log: `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7/tmux.log`
+- Phase log: `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7/logs/acquire.attempt-0001.log`
