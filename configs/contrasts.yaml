@@ -1,0 +1,249 @@
+schema_version: 1
+verified_on: "2026-08-30"
+project_status: exploratory_non_preregistered
+scientific_gates: false
+
+manifest_contract:
+  inference_unit: participant
+  unit_key: unit_id
+  required_fields:
+    - participant_id
+    - session_id
+    - run_id
+    - source_file
+    - selector
+    - condition
+    - explanatory_target
+    - healthy_wake_reference
+    - clinical_holdout
+    - report_produced
+    - task_relevance
+    - content
+    - metadata_status
+  encoder_fields_only: [unit_id, source_file, modality, selector]
+  encoder_forbidden_fields:
+    - participant_id
+    - session_id
+    - run_id
+    - condition
+    - explanatory_target
+    - healthy_wake_reference
+    - clinical_holdout
+    - report_produced
+    - task_relevance
+    - content
+    - metadata_status
+    - variables
+  join_labels_after_encoding: true
+  unknown_columns: fail
+  unknown_levels: fail
+  inferred_labels: forbidden
+
+datasets:
+  propofol_tms_eeg:
+    release: openneuro:ds005620:1.0.0
+    explanatory_target: conscious_level
+    clinical_holdout: false
+    native_sources: [participants.tsv, BIDS filename entities, '*_events.tsv']
+    verified_mapping:
+      task-awake: {condition: awake, healthy_wake_reference: true}
+      task-sed: {condition: propofol_sedation, healthy_wake_reference: false}
+      task-sed2: {condition: pre_awakening_propofol, healthy_wake_reference: false}
+      acq-tms: {modality: tms-eeg, pulse_marker: Response/R128}
+    contrasts:
+      - id: awake_vs_propofol_sedation
+        conditions: [awake, propofol_sedation]
+        subset: {modality: eeg}
+        match_within: participant_id
+      - id: awake_vs_direct_tms_under_propofol
+        conditions: [awake, propofol_sedation]
+        subset: {acquisition: tms}
+        match_within: participant_id
+    unresolved:
+      - The v1.0.0 release has no participant/run dream-report table linking task-sed2 to experience.
+      - Do not use task-sed2 as an experienced-content label until an official key is obtained.
+    official_sources:
+      - https://github.com/OpenNeuroDatasets/ds005620/tree/1.0.0
+      - https://doi.org/10.18112/openneuro.ds005620.v1.0.0
+
+  dream_tononi_serial_awakenings:
+    release: figshare:23306054:2
+    explanatory_target: experienced_content
+    clinical_holdout: false
+    native_sources: [Records.csv, Records-README.txt, Data/PSG/*.edf]
+    verified_mapping:
+      experience_2: {condition: dream_experience_with_recall, contrast_eligible: true}
+      experience_1: {condition: dream_experience_without_recall, contrast_eligible: true}
+      experience_0: {condition: no_dream_experience, contrast_eligible: true}
+      experience_-1: {condition: ambiguous_experience_with_or_without_recall, contrast_eligible: false}
+      experience_-2: {condition: ambiguous_no_experience_or_without_recall, contrast_eligible: false}
+      experience_-3: {condition: ambiguous_recalled_experience_or_none, contrast_eligible: false}
+      experience_-4: {condition: unknown_experience, contrast_eligible: false}
+    contrasts:
+      - id: dream_experience_vs_no_experience
+        positive: [dream_experience_with_recall, dream_experience_without_recall]
+        reference: [no_dream_experience]
+        match_within: participant_id
+      - id: recalled_vs_unrecalled_experience
+        positive: [dream_experience_with_recall]
+        reference: [dream_experience_without_recall]
+        match_within: participant_id
+    unresolved: []
+    official_sources:
+      - https://bridges.monash.edu/articles/dataset/Tononi_Serial_Awakenings/23306054/2
+      - https://api.figshare.com/v2/articles/23306054/versions/2
+
+  tactile_detection:
+    release: openneuro:ds001785:1.1.1
+    explanatory_target: experienced_content
+    clinical_holdout: false
+    native_sources: [participants.tsv, task-adapt_events.json, '*task-adapt*_events.tsv']
+    verified_mapping:
+      hit: {stimulus_present: true, detected: true, condition: tactile_detected}
+      miss: {stimulus_present: true, detected: false, condition: tactile_undetected}
+      cr: {stimulus_present: false, detected: false, condition: catch_correct_rejection}
+      fa: {stimulus_present: false, detected: true, condition: catch_false_alarm}
+    contrasts:
+      - id: detected_vs_undetected_tactile
+        positive: [tactile_detected]
+        reference: [tactile_undetected]
+        subset: {stimulus_present: true}
+        match_within: participant_id
+      - id: detection_by_confidence
+        conditions: [tactile_detected, tactile_undetected]
+        continuous_covariate: confidence
+        match_within: participant_id
+    unresolved:
+      - The native sdt column uses undocumented one-letter values inconsistent with its JSON levels; it is retained but never decoded.
+    official_sources:
+      - https://github.com/OpenNeuroDatasets/ds001785/tree/1.1.1
+      - https://doi.org/10.18112/openneuro.ds001785.v1.1.1
+
+  somatosensory_report_task:
+    release: osf:hqkym:doi-2025
+    explanatory_target: report_task_relevance
+    clinical_holdout: false
+    native_sources: [NR directory, R sequence directories, extracted MAT inventory]
+    verified_mapping:
+      NR: {condition: no_report, report_produced: false, task_relevance: not_applicable}
+      R_CT: {condition: report_task_relevant, report_produced: true, task_relevance: relevant}
+      R_CV: {condition: report_task_irrelevant, report_produced: true, task_relevance: irrelevant}
+      ST: sensory_threshold_plus_10_percent
+      MT: motor_threshold_plus_10_percent
+    contrasts:
+      - id: report_vs_no_report
+        positive: [report_task_relevant, report_task_irrelevant]
+        reference: [no_report]
+        match_on: [participant_id, stimulation_intensity]
+      - id: task_relevant_vs_irrelevant_report
+        positive: [report_task_relevant]
+        reference: [report_task_irrelevant]
+        match_on: [participant_id, stimulation_intensity]
+    unresolved:
+      - Exact raw MAT signal filename and matrix variable are not documented in the OSF root record; verify after extraction before selecting files.
+    official_sources:
+      - https://osf.io/hqkym/
+      - https://www.nature.com/articles/s41597-025-05970-1
+
+  cogitate_meeg:
+    release: doi:10.17617/1.nzwp-7j89:2024-doi-bundle
+    explanatory_target: experienced_content
+    clinical_holdout: false
+    native_sources: [participants.tsv, '*task-Dur*_events.tsv', '*task-Dur*_events.json']
+    verified_design_factors: [stimulus_category, orientation, duration, task_relevance]
+    contrasts: []
+    unresolved:
+      - Account-gated BIDS event column names and exact level strings must be snapshotted from the downloaded bundle.
+      - No event adapter runs until that schema is audited; paper-level factor names are not treated as native columns.
+    official_sources:
+      - https://doi.org/10.17617/1.nzwp-7j89
+      - https://www.nature.com/articles/s41597-026-07350-9
+
+  psiconnect:
+    release: openneuro:ds006110:1.2.1
+    explanatory_target: psychedelic_organisation
+    clinical_holdout: false
+    native_sources: [participants.tsv, task-series_eeg.json, '*task-series_events.tsv']
+    verified_mapping:
+      ses-01: {condition: baseline_series, healthy_wake_reference: true, psilocybin_exposure: false}
+      ses-02: {condition: psilocybin_series, healthy_wake_reference: false, psilocybin_exposure: true}
+    contrasts:
+      - id: psilocybin_vs_baseline_series
+        positive: [psilocybin_series]
+        reference: [baseline_series]
+        match_within: participant_id
+    unresolved:
+      - Repeated near-adjacent movie/music/meditation/rest marker semantics are not described by task-series_eeg.json; context segmentation is disabled.
+      - Meditation-training assignment is not exposed in participants.tsv and is not inferred.
+    official_sources:
+      - https://github.com/OpenNeuroDatasets/ds006110/tree/1.2.1
+      - https://www.nature.com/articles/s41597-026-07312-1
+
+  doc_resting_eeg:
+    release: figshare:23552964:4
+    explanatory_target: clinical_status
+    clinical_holdout: true
+    native_sources: ['*.vhdr', '*.vmrk', '*.dat']
+    verified_mapping: {}
+    contrasts: []
+    unresolved:
+      - The release provides opaque stems and aggregate counts only; no official stem-to-healthy/DoC/diagnosis/CRS-R key was found.
+      - All units remain clinical_group=null and healthy_wake_reference=null; do not infer labels from file ordering or signal features.
+    official_sources:
+      - https://api.figshare.com/v2/articles/23552964/versions/4
+      - https://doi.org/10.6084/m9.figshare.23552964.v4
+
+  doc_polysomnography:
+    release: mendeley:6wx4n25h4v:1
+    explanatory_target: clinical_status
+    clinical_holdout: true
+    native_sources: ['Patient_<number>_<diagnosis>.edf']
+    verified_mapping:
+      VS: vegetative_state
+      MCS-: minimally_conscious_minus
+      MCS+: minimally_conscious_plus
+    contrasts:
+      - id: mcs_vs_vs
+        positive: [minimally_conscious_minus, minimally_conscious_plus]
+        reference: [vegetative_state]
+      - id: mcs_plus_vs_minus
+        positive: [minimally_conscious_plus]
+        reference: [minimally_conscious_minus]
+    unresolved:
+      - CRS-R and demographic covariates are not present in the release-level filename key.
+      - Official page text inconsistently reports 42 versus 43 recordings; acquisition inventory is authoritative.
+    official_sources:
+      - https://data.mendeley.com/datasets/6wx4n25h4v/1
+      - https://doi.org/10.17632/6wx4n25h4v.1
+
+  propofol_fmri:
+    release: openneuro:ds006623:1.0.0
+    explanatory_target: conscious_level
+    clinical_holdout: false
+    native_sources:
+      - '*task-{rest,imagery}_run-*_bold.nii.gz'
+      - derivatives/Propofol_Infusion/*/*_ESC.1D
+      - derivatives/LOR_ROR_Timing.csv
+      - derivatives/Stimulus_Timing
+    verified_mapping:
+      imagery_run_1: no_propofol_imagery
+      imagery_run_2_before_LOR: responsive_induction
+      imagery_run_2_from_LOR: behaviorally_unresponsive
+      imagery_run_3_before_ROR: behaviorally_unresponsive
+      imagery_run_3_from_ROR: responsive_recovery
+      rest_run_1: no_propofol_rest
+    contrasts:
+      - id: unresponsive_vs_responsive_propofol
+        positive: [behaviorally_unresponsive]
+        reference: [responsive_induction, responsive_recovery]
+        match_within: participant_id
+      - id: continuous_effect_site_concentration
+        continuous_covariate: effect_site_concentration_mean
+        match_within: participant_id
+    unresolved:
+      - Participants without an ROR entry retain an unresolved recovery-status segment.
+      - Stimulus_Timing AFNI vectors require a separate timing audit before tennis/navigation/squeeze event-level content contrasts.
+      - Passive fMRI units are never labelled as direct perturbational reachability.
+    official_sources:
+      - https://github.com/OpenNeuroDatasets/ds006623/tree/1.0.0
+      - https://doi.org/10.18112/openneuro.ds006623.v1.0.0

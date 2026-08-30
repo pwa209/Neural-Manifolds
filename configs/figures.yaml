@@ -1,0 +1,211 @@
+schema_version: 1
+backend: python-matplotlib
+target_journal: Nature/Science; Nature Human Behaviour fallback
+export:
+  width_mm: 183
+  svg_editable_text: true
+  pdf_fonttype: 42
+  tiff_dpi: 600
+  tiff_compression: tiff_lzw
+  background: white
+  body_font_pt: 7
+  panel_label_font_pt: 8
+integrity:
+  participant_points_required: true
+  biological_n_visible: true
+  uncertainty: participant_bootstrap_95_percentile_interval
+  bootstrap_repetitions: 2000
+  exact_p_values_only: true
+  p_value_stars_forbidden: true
+  source_artifact_sha256_required: true
+  production_mock_data_forbidden: true
+palette:
+  neutral: "#767676"
+  dark: "#272727"
+  blue: "#0F4D92"
+  blue_light: "#9FC3E5"
+  teal: "#42949E"
+  violet: "#9A4D8E"
+  orange: "#D8842F"
+  red: "#B64342"
+  pale: "#E8E8E8"
+axis_order: [R, M, D, A, P]
+axis_labels:
+  R: repertoire
+  M: metastability
+  D: directionality
+  A: alignment
+  P: perturbational reachability
+figures:
+  figure_1:
+    title: Frozen coordinates define an auditable manifold-regime programme
+    core_conclusion: A frozen label-free coordinate system connects diverse recordings to five prespecified regime axes and technically locked transfer.
+    archetype: schematic-led composite
+    final_size_mm: [183, 105]
+    panel_map:
+      a: Frozen encoder-to-regime analysis and transfer workflow.
+      b: Five-axis evidence vocabulary with no scalar consciousness score.
+      c: Actual participant and condition coverage in the profile source table.
+    evidence_hierarchy:
+      hero: End-to-end frozen workflow and five-axis mapping.
+      validation: Observed dataset-by-condition participant coverage.
+      controls: Provenance hashes and explicit held-out transfer status.
+    statistics: Participant counts are unique biological participants per dataset and condition; no inferential statistic is shown.
+    source_data: Profile table and figure contract.
+    image_integrity: Diagram elements are vector-native; no representative raster image is used.
+    reviewer_risks:
+      - Labels could leak into representation fitting.
+      - Heterogeneous datasets could be mistaken for a single pooled cohort.
+      - The axes could be misread as one scalar consciousness index.
+    display:
+      max_main_cohorts: 14
+      condition_priority:
+        - awake
+        - propofol_sedation
+        - baseline_series
+        - psilocybin_series
+        - dream_experience_with_recall
+        - dream_experience_without_recall
+        - no_dream_experience
+        - tactile_detected
+        - tactile_undetected
+  figure_2:
+    title: Conscious states occupy distinct multiaxial regimes
+    core_conclusion: State differences form reproducible five-axis fingerprints rather than a one-dimensional ordering.
+    archetype: quantitative grid
+    final_size_mm: [183, 130]
+    panel_map:
+      a: Condition-level mean profile heatmap.
+      b: Participant-level axis values with participant-bootstrap 95% intervals.
+    evidence_hierarchy:
+      hero: Individual participant profiles across all five axes.
+      validation: Condition-by-axis mean structure.
+      controls: Dataset identity, biological n, and source provenance remain visible.
+    statistics: Mean and two-sided participant-bootstrap 95% percentile interval; descriptive only, with no star decorations.
+    source_data: Participant-level five-axis profile table.
+    image_integrity: Every heatmap cell is derived from the exported participant source table.
+    reviewer_risks:
+      - Unequal cohort sizes could dominate means.
+      - Dataset effects could masquerade as state effects.
+      - Hidden aggregation could obscure discordant participants.
+    display:
+      max_main_conditions: 10
+      condition_priority:
+        - awake
+        - propofol_sedation
+        - pre_awakening_propofol
+        - baseline_series
+        - psilocybin_series
+        - dream_experience_with_recall
+        - dream_experience_without_recall
+        - no_dream_experience
+        - tactile_detected
+        - tactile_undetected
+  figure_3:
+    title: Content and report dissociate across the regime axes
+    core_conclusion: Content and report manipulations produce axis-specific participant-level changes with distinct multivariate signatures.
+    archetype: quantitative grid
+    final_size_mm: [183, 115]
+    panel_map:
+      a: Participant-level effects for each content/report contrast and axis.
+      b: Contrast-by-axis mean effect heatmap.
+    evidence_hierarchy:
+      hero: Individual participant contrast effects.
+      validation: Multiaxial contrast fingerprint.
+      controls: Dataset-stratified points and bootstrap uncertainty.
+    statistics: Mean participant effect and two-sided participant-bootstrap 95% percentile interval; exact p values belong in source tables/captions, never stars.
+    source_data: Models content_report table.
+    image_integrity: No representative images or locally adjusted raster data.
+    reviewer_risks:
+      - Report and content contrasts may be conflated.
+      - Repeated observations may inflate biological n.
+      - Selective axis display could exaggerate dissociation.
+    display:
+      max_main_contrasts: 6
+      contrast_priority:
+        - dream_experience_vs_no_experience
+        - recalled_vs_unrecalled_experience
+        - detected_vs_undetected_tactile
+        - report_vs_no_report
+        - task_relevant_vs_irrelevant_report
+  figure_4:
+    title: Passive reachability predicts direct perturbational response
+    core_conclusion: Participant-level passive reachability covaries with direct TMS-evoked response while preserving condition-dependent post-pulse dynamics.
+    archetype: asymmetric mixed-modality figure
+    final_size_mm: [183, 120]
+    panel_map:
+      a: Passive reachability versus direct response for individual participants.
+      b: Direct response by condition with participant-bootstrap uncertainty.
+      c: Source-derived post-pulse trajectory with participant-bootstrap uncertainty over time.
+    evidence_hierarchy:
+      hero: Passive-to-direct participant-level association.
+      validation: Condition-stratified direct response and time-resolved trajectory.
+      controls: Pulse/QC provenance and biological n.
+    statistics: Descriptive least-squares line, Pearson r, and participant-bootstrap 95% intervals; no causal slope claim and no p-value stars.
+    source_data: TMS participant and time-course table.
+    image_integrity: Pulse trajectory is plotted without smoothing or selective time cropping beyond recorded source bounds.
+    reviewer_risks:
+      - Shared preprocessing could induce circular passive-direct association.
+      - Trial counts and rejected epochs could differ by condition.
+      - A pooled association could be driven by condition separation.
+  figure_5:
+    title: Regime contrasts survive prespecified null-family perturbations
+    core_conclusion: Participant-level observed contrasts remain directionally stronger than their matched null contrasts across prespecified surrogate and control families, with independent fMRI triangulation when available.
+    archetype: quantitative grid
+    final_size_mm: [183, 155]
+    panel_map:
+      a: Participant-level signed observed-minus-null effect survival by null family and axis.
+      b: Optional fMRI condition-by-axis triangulation, explicitly excluding perturbational reachability.
+    evidence_hierarchy:
+      hero: Observed-minus-null effect survival across prespecified surrogate and representation-control families.
+      validation: Secondary frozen-coordinate fMRI triangulation when supplied.
+      controls: Family, repeat, seed, contrast-condition provenance, participant points, uncertainty, and missing-modality disclosure.
+    statistics: Null repeats are averaged within participant and family-axis check before the mean and two-sided participant-bootstrap 95% percentile interval; no threshold-based scientific gate.
+    source_data: Repeat-level observed/null contrast-effect table, participant summary, and optional fMRI participant profile table.
+    image_integrity: Missing fMRI input is disclosed rather than replaced with simulated values.
+    reviewer_risks:
+      - Robustness choices could be selected after inspecting outcomes.
+      - Surrogate families test distinct failure modes and must not be treated as interchangeable.
+      - Passive fMRI could be overinterpreted as direct controllability.
+    display:
+      max_main_contrasts: 1
+      max_main_checks: 25
+      contrast_priority:
+        - awake_vs_propofol_sedation
+        - psilocybin_vs_baseline_series
+        - dream_experience_vs_no_experience
+        - detected_vs_undetected_tactile
+      analysis_priority:
+        - pre_encoder_sensor_row_permutation
+        - phase_randomization
+        - blockwise_temporal_permutation
+        - post_encoder_latent_rotation_control
+        - covariance_dwell_matched_state_space
+      metric_priority: [R, M, D, A, P]
+  figure_6:
+    title: Frozen profiles transfer to held-out disorders of consciousness cohorts
+    core_conclusion: A technically locked healthy-state transform yields heterogeneous, uncertainty-aware clinical profiles associated with behavioural preservation without individual diagnostic reclassification.
+    archetype: asymmetric mixed-modality figure
+    final_size_mm: [183, 120]
+    panel_map:
+      a: Participant-level five-axis profiles grouped by recorded diagnosis.
+      b: Regime-preservation score versus CRS-R total for individual participants.
+      c: Participant-by-axis heatmap exposing heterogeneity and discordant cases without names or diagnostic relabelling.
+    evidence_hierarchy:
+      hero: Individual frozen clinical profiles and CRS-R association.
+      validation: Cross-dataset diagnostic-group structure.
+      controls: Pseudonymous participant indexing, uncertainty, and explicit non-diagnostic scope.
+    statistics: Participant-level display, group means with participant-bootstrap 95% intervals, descriptive Pearson r; no automatic reclassification and no p-value stars.
+    source_data: Optional held-out clinical participant profile table.
+    image_integrity: Clinical identifiers are pseudonymous and never drawn as labels; no participant is removed for visual concordance.
+    reviewer_risks:
+      - Post-lock refitting could invalidate held-out transfer.
+      - Diagnosis imbalance and montage differences could drive effects.
+      - Group summaries could conceal clinically important discordance.
+    display:
+      max_main_diagnoses: 8
+      diagnosis_priority:
+        - minimally_conscious_plus
+        - minimally_conscious_minus
+        - vegetative_state
+        - diagnosis unavailable

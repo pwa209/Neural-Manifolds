@@ -1,0 +1,37 @@
+schema_version: 1
+models:
+  labram_base:
+    role: primary_frozen_eeg_coordinate_transform
+    repository: https://github.com/935963004/LaBraM.git
+    revision: c431221e6cfd23dbfa9950e0180682fb322b0548
+    factory: modeling_finetune:labram_base_patch200_200
+    checkpoint_url: https://raw.githubusercontent.com/935963004/LaBraM/c431221e6cfd23dbfa9950e0180682fb322b0548/checkpoints/labram-base.pth
+    checkpoint_git_blob_sha1: 221148b5af403e9178629bb61e94b2e7d89ef172
+    checkpoint_sha256: null  # populated in the immutable model manifest after download
+    source_license: MIT
+    sampling_hz: 200
+    patch_samples: 200
+    units: microvolts
+    parameters_reported: 5800000
+    trainable: false
+  brainlm:
+    role: secondary_frozen_fmri_coordinate_transform
+    repository: https://github.com/vandijklab/BrainLM.git
+    revision: eded39c86c27e03f5ead1d6a14311e92d1305e5e
+    checkpoint_source: https://huggingface.co/vandijklab/brainlm
+    checkpoint_revision: 265012f6013d4da5fbb87f18cc546e6d48762cd3
+    checkpoint_variant: vitmae_111M
+    checkpoint_files:
+      - name: vitmae_111M/config.json
+        url: https://huggingface.co/vandijklab/brainlm/resolve/265012f6013d4da5fbb87f18cc546e6d48762cd3/vitmae_111M/config.json
+        sha256: 2ec77272e90653dde8acc8c54bdfe384fca99c7d160e464108a4789141382a5a
+        size: 780
+      - name: vitmae_111M/model.safetensors
+        url: https://huggingface.co/vandijklab/brainlm/resolve/265012f6013d4da5fbb87f18cc546e6d48762cd3/vitmae_111M/model.safetensors
+        sha256: fd33ba98049efcb76b736373bebd5e90685151f856ab1ada45cceaeb09b85d49
+        size: 450399640
+    usage_license: CC-BY-NC-ND-4.0
+    commercial_use: false
+    derivative_redistribution: false
+    parcellation: UKB_424
+    trainable: false

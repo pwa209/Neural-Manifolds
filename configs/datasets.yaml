@@ -1,0 +1,271 @@
+schema_version: 1
+registry_verified_on: "2026-08-30"
+defaults:
+  immutable_raw_releases: true
+  checksum_algorithm: sha256
+  maximum_attempts: 3
+  connect_timeout_seconds: 20
+  read_timeout_seconds: 120
+
+datasets:
+  - id: propofol_tms_eeg
+    title: A repeated awakening study exploring dreaming during propofol sedation
+    role: level_and_direct_perturbation
+    modalities: [eeg, tms-eeg, experience_reports]
+    source:
+      provider: openneuro
+      accession: ds005620
+      version: 1.0.0
+      doi: 10.18112/openneuro.ds005620.v1.0.0
+      landing_url: https://openneuro.org/datasets/ds005620/versions/1.0.0
+      repository_url: https://github.com/OpenNeuroDatasets/ds005620.git
+      revision: a7ee50741b5625ee54478be73201ecfd4fd904dd
+      mutable_upstream: false
+    license:
+      spdx: CC0-1.0
+      status: verified
+      source_url: https://raw.githubusercontent.com/OpenNeuroDatasets/ds005620/1.0.0/dataset_description.json
+      note: The versioned BIDS dataset_description.json declares CC0; its README contains older CC-BY wording.
+    access:
+      mode: open
+      terms_url: https://openneuro.org/terms
+    validation:
+      required_paths: [dataset_description.json, participants.tsv]
+      required_globs: ["sub-*/eeg/*"]
+      minimum_files: 1400
+      minimum_bytes: 1
+    official_sources:
+      - https://doi.org/10.18112/openneuro.ds005620.v1.0.0
+      - https://github.com/OpenNeuroDatasets/ds005620/tree/1.0.0
+
+  - id: dream_tononi_serial_awakenings
+    title: Tononi Serial Awakenings (DREAM)
+    role: primary_within_sleep_experienced_content
+    modalities: [hd-eeg, polysomnography, experience_reports]
+    source:
+      provider: figshare
+      accession: "23306054"
+      version: "2"
+      doi: 10.26180/23306054.v2
+      landing_url: https://bridges.monash.edu/articles/dataset/Tononi_Serial_Awakenings/23306054/2
+      api_url: https://api.figshare.com/v2/articles/23306054/versions/2
+      mutable_upstream: false
+    license:
+      spdx: CC-BY-4.0
+      status: verified
+      source_url: https://bridges.monash.edu/articles/dataset/Tononi_Serial_Awakenings/23306054/2
+    access:
+      mode: open
+      terms_url: https://bridges.monash.edu/terms
+    validation:
+      required_globs: ["Tononi Serial Awakenings-Part*.zip"]
+      minimum_files: 37
+      minimum_bytes: 7778386207
+    official_sources:
+      - https://doi.org/10.26180/23306054.v2
+      - https://bridges.monash.edu/articles/dataset/Tononi_Serial_Awakenings/23306054/2
+
+  - id: tactile_detection
+    title: Evidence accumulation relates to perceptual consciousness and monitoring
+    role: near_threshold_content_and_confidence
+    modalities: [eeg, behaviour]
+    source:
+      provider: openneuro
+      accession: ds001785
+      version: 1.1.1
+      doi: 10.18112/openneuro.ds001785.v1.1.1
+      landing_url: https://openneuro.org/datasets/ds001785/versions/1.1.1
+      repository_url: https://github.com/OpenNeuroDatasets/ds001785.git
+      revision: 53be0167e7068aba693d57923eb4c9c037878159
+      mutable_upstream: false
+    license:
+      spdx: CC0-1.0
+      status: verified
+      source_url: https://github.com/OpenNeuroDatasets/ds001785/blob/1.1.1/dataset_description.json
+    access:
+      mode: open
+      terms_url: https://openneuro.org/terms
+    validation:
+      required_paths: [dataset_description.json, participants.tsv]
+      required_globs: ["sub-*/ses-*/eeg/*"]
+      minimum_files: 290
+      minimum_bytes: 1
+    official_sources:
+      - https://doi.org/10.18112/openneuro.ds001785.v1.1.1
+      - https://github.com/OpenNeuroDatasets/ds001785/tree/1.1.1
+
+  - id: somatosensory_report_task
+    title: An HD-EEG database to dissect somatosensory awareness from task relevance and report
+    role: report_and_task_relevance_dissociation
+    modalities: [hd-eeg, behaviour]
+    source:
+      provider: osf
+      accession: hqkym
+      version: doi-2025
+      doi: 10.17605/OSF.IO/HQKYM
+      landing_url: https://osf.io/hqkym/
+      api_url: https://api.osf.io/v2/nodes/hqkym/files/
+      metadata_url: https://api.osf.io/v2/nodes/hqkym/
+      mutable_upstream: true
+    license:
+      spdx: NOASSERTION
+      status: unresolved
+      source_url: https://osf.io/hqkym/
+      note: The article establishes public access, but no dataset-level licence was visible in the official record. Preserve this warning and do not redistribute raw data until clarified.
+    access:
+      mode: open
+      terms_url: https://osf.io/terms-of-use/
+    validation:
+      minimum_files: 1
+      minimum_bytes: 1
+    official_sources:
+      - https://doi.org/10.17605/OSF.IO/HQKYM
+      - https://www.nature.com/articles/s41597-025-05970-1
+
+  - id: cogitate_meeg
+    title: Cogitate M-EEG BIDS data
+    role: large_sample_content_persistence_and_report_transitions
+    modalities: [meg, eeg, eye_tracking, mri, behaviour]
+    source:
+      provider: gated
+      accession: cog_meeg_exp1
+      version: 2024-doi-bundle
+      doi: 10.17617/1.nzwp-7j89
+      landing_url: https://doi.org/10.17617/1.nzwp-7j89
+      api_url: https://cogitate-data.ae.mpg.de/
+      mutable_upstream: false
+    license:
+      spdx: CC-BY-4.0
+      status: verified
+      source_url: https://arc-cogitate.squarespace.com/data-bundles
+      note: Reuse is also subject to the Cogitate Terms and Conditions.
+    access:
+      mode: account_required
+      terms_url: https://arc-cogitate.squarespace.com/terms-and-conditions
+      instructions: Create/approve a Cogitate Data User Account and use the repository's interactive authenticated downloader or XNAT client; do not put credentials in this repository or command arguments.
+    validation:
+      required_paths: [dataset_description.json, participants.tsv]
+      required_globs: ["sub-*/**/*"]
+      minimum_files: 100
+      minimum_bytes: 1000000000
+    official_sources:
+      - https://doi.org/10.17617/1.nzwp-7j89
+      - https://www.nature.com/articles/s41597-026-07350-9
+      - https://arc-cogitate.squarespace.com/data-bundles
+
+  - id: psiconnect
+    title: PsiConnect
+    role: altered_conscious_organisation
+    modalities: [eeg, fmri, structural_mri, diffusion_mri, behaviour]
+    source:
+      provider: openneuro
+      accession: ds006110
+      version: 1.2.1
+      doi: 10.18112/openneuro.ds006110.v1.2.1
+      landing_url: https://openneuro.org/datasets/ds006110/versions/1.2.1
+      repository_url: https://github.com/OpenNeuroDatasets/ds006110.git
+      revision: 8c5d6b077c63d29796409b622ebc300fdec6aadd
+      mutable_upstream: false
+    license:
+      spdx: CC0-1.0
+      status: verified
+      source_url: https://raw.githubusercontent.com/OpenNeuroDatasets/ds006110/1.2.1/dataset_description.json
+      note: Version 1.2.1 supersedes the proposal's 1.2.0 citation and was published on 20 August 2026.
+    access:
+      mode: open
+      terms_url: https://openneuro.org/terms
+    validation:
+      required_paths: [dataset_description.json, README]
+      required_globs:
+        - "derivatives/EEG/**/*.mat"
+        - "derivatives/fmriprep-22.0.2/**/*bold.nii.gz"
+      minimum_files: 47000
+      minimum_bytes: 1
+    official_sources:
+      - https://doi.org/10.18112/openneuro.ds006110.v1.2.1
+      - https://github.com/OpenNeuroDatasets/ds006110/tree/1.2.1
+
+  - id: doc_resting_eeg
+    title: The raw data of resting EEG of patients with prolonged disorders of consciousness
+    role: primary_locked_clinical_transfer
+    modalities: [eeg, clinical]
+    source:
+      provider: figshare
+      accession: "23552964"
+      version: "4"
+      doi: 10.6084/m9.figshare.23552964.v4
+      landing_url: https://figshare.com/articles/dataset/23552964/4
+      api_url: https://api.figshare.com/v2/articles/23552964/versions/4
+      mutable_upstream: false
+    license:
+      spdx: CC-BY-4.0
+      status: verified
+      source_url: https://api.figshare.com/v2/articles/23552964/versions/4
+      note: The official version API reports CC BY 4.0; the downloader re-verifies it before materialisation.
+    access:
+      mode: open
+      terms_url: https://info.figshare.com/terms/
+    validation:
+      required_globs: ["*.dat", "*.vhdr", "*.vmrk"]
+      minimum_files: 298
+      minimum_bytes: 730302544
+    official_sources:
+      - https://doi.org/10.6084/m9.figshare.23552964.v4
+      - https://api.figshare.com/v2/articles/23552964/versions/4
+
+  - id: doc_polysomnography
+    title: Polysomnographic records of patients with disorders of consciousness
+    role: independent_clinical_sleep_replication
+    modalities: [eeg, eog, emg, polysomnography, clinical]
+    source:
+      provider: mendeley
+      accession: 6wx4n25h4v
+      version: "1"
+      doi: 10.17632/6wx4n25h4v.1
+      landing_url: https://data.mendeley.com/datasets/6wx4n25h4v/1
+      api_url: https://data.mendeley.com/public-api/datasets/6wx4n25h4v
+      mutable_upstream: false
+      note: The versioned public API exposes 42 EDF files (2,769,190,768 bytes), while the landing-page description says 43 and its reproduction text says 42.
+    license:
+      spdx: CC-BY-4.0
+      status: verified
+      source_url: https://data.mendeley.com/datasets/6wx4n25h4v/1
+    access:
+      mode: open
+      terms_url: https://www.elsevier.com/legal/elsevier-website-terms-and-conditions
+    validation:
+      required_globs: ["**/*.edf"]
+      minimum_files: 42
+      minimum_bytes: 2769190768
+    official_sources:
+      - https://doi.org/10.17632/6wx4n25h4v.1
+      - https://data.mendeley.com/datasets/6wx4n25h4v/1
+
+  - id: propofol_fmri
+    title: Michigan Human Anesthesia fMRI Dataset-1
+    role: secondary_cross_modal_triangulation
+    modalities: [fmri, structural_mri, behaviour]
+    source:
+      provider: openneuro
+      accession: ds006623
+      version: 1.0.0
+      doi: 10.18112/openneuro.ds006623.v1.0.0
+      landing_url: https://openneuro.org/datasets/ds006623/versions/1.0.0
+      repository_url: https://github.com/OpenNeuroDatasets/ds006623.git
+      revision: 9c36d2c59d58fbbced4af6d0413d22a6ea5c4880
+      mutable_upstream: false
+    license:
+      spdx: CC0-1.0
+      status: verified
+      source_url: https://raw.githubusercontent.com/OpenNeuroDatasets/ds006623/1.0.0/dataset_description.json
+    access:
+      mode: open
+      terms_url: https://openneuro.org/terms
+    validation:
+      required_paths: [dataset_description.json, README.md]
+      required_globs: ["derivatives/fmriprep_output/**/*bold.nii.gz"]
+      minimum_files: 41000
+      minimum_bytes: 1
+    official_sources:
+      - https://doi.org/10.18112/openneuro.ds006623.v1.0.0
+      - https://github.com/OpenNeuroDatasets/ds006623/tree/1.0.0

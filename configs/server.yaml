@@ -1,0 +1,58 @@
+schema_version: 1
+project_id: conserved-manifold-regime
+project_status: exploratory_non_preregistered
+scientific_gates: false
+
+identity:
+  expected_hostname: kemove-Rack-Server
+  expected_user: wangpeng
+  ssh_host: 127.0.0.1
+  ssh_port: 1022
+
+# Intentionally unresolved.  Record the three project-specific roots only after
+# the user confirms them.  Bootstrap, deployment, and queue scripts also require
+# the same values as explicit arguments and fail if configuration and arguments
+# differ; no project directory is inferred from another project's layout.
+storage:
+  canonical_root: null
+  work_root: null
+  checkpoint_root: null
+  raw_subdirectory: raw
+  raw_data_location: canonical_only
+  immutable_raw: true
+  active_derivatives_location: work_only
+  logs_and_markers_location: checkpoint_only
+  allowed_parent_mounts:
+    canonical: /private_nas/wangpeng
+    work: /data1/wangpeng
+    checkpoint: /data2/wangpeng
+
+scheduler:
+  type: tmux
+  slurm_available: false
+  session_prefix: neural-manifolds
+  queue_module: workflow.queue
+
+deployment:
+  source_mode: content_addressed
+  github_repository: https://github.com/pwa209/Neural-Manifolds.git
+  require_exact_commit: true
+  require_source_manifest: true
+  destructive_sync: false
+
+runtime:
+  python: "3.11"
+  gpu: NVIDIA H100 80GB HBM3
+  deterministic_where_supported: true
+  model_cache_subdirectory: cache/models
+  model_environment_file: cache/models/model_paths.env
+  brainlm_checkpoint_stage: fmri_only
+
+# These externally supplied assets are required only when the fMRI phase starts.
+# The queue hashes both files and binds the explicit timing convention into the
+# fMRI phase identity.  Leave them null until their exact approved locations and
+# the ds006623 timing-table index origin have been verified.
+fmri_inputs:
+  ukb424_atlas_path: null
+  ukb424_coordinates_path: null
+  ds006623_timing_index_origin: null

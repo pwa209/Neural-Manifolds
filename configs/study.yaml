@@ -1,0 +1,97 @@
+schema_version: 1
+study_id: conserved-manifold-regime
+status: exploratory_non_preregistered
+scientific_gates: false
+random_seeds: [1701, 2903, 4099, 6211, 7919]
+
+representation:
+  primary: labram_base
+  weights_frozen: true
+  label_free: true
+  layer: final_pre_head
+  pooling: valid_channel_patch_mean
+  secondary_pooling: final_four_layers_mean
+  dynamics_rank: 32
+  harmonised_window_seconds: 2.0
+  harmonised_step_seconds: 1.0
+  # A separate overlapping track is required to resolve the configured 20–200 ms
+  # communication lags without changing the coarser state-dynamics trajectory.
+  alignment_window_seconds: 1.0
+  alignment_step_seconds: 0.02
+  native_window_seconds: 4.0
+  labram_patch_seconds: 1.0
+
+preprocessing:
+  target_sampling_hz: 200
+  highpass_hz: 0.1
+  lowpass_hz: 75.0
+  sleep_sensitivity_highpass_hz: 0.3
+  mains_notch_hz: auto
+  maximum_interpolation_fraction: 0.15
+  minimum_rest_seconds: 90
+  minimum_event_trials_per_condition: 30
+  minimum_valid_windows: 60
+  canonical_channels:
+    - Fp1
+    - Fp2
+    - F7
+    - F3
+    - Fz
+    - F4
+    - F8
+    - T7
+    - C3
+    - Cz
+    - C4
+    - T8
+    - P7
+    - P3
+    - Pz
+    - P4
+    - P8
+    - O1
+    - O2
+  minimum_canonical_channels: 15
+  legacy_channel_map: {T3: T7, T4: T8, T5: P7, T6: P8}
+
+metrics:
+  repertoire:
+    primary: covariance_participation_ratio
+    secondary: [knn_intrinsic_dimension, knn_entropy, local_anisotropy]
+  metastability:
+    primary: persistence_revisability_profile
+    state_range: [6, 20]
+    required_initialisations: 10
+    minimum_solution_ami: 0.70
+  directionality:
+    primary: entropy_production
+    secondary: [arrow_of_time_auc, transition_asymmetry, motif_recurrence]
+  alignment:
+    primary: lagged_shared_predictive_variance
+    lags_ms: [20, 40, 60, 80, 100, 120, 140, 160, 180, 200]
+    exclude_zero_lag: true
+  reachability:
+    primary: stochastic_gramian_logdet
+    horizon_steps: 20
+    regularisation: 1.0e-6
+
+sampling:
+  equalise_windows: true
+  repeats: 100
+  reliability_seconds: [30, 60, 90, 120, 300]
+
+statistics:
+  inference_unit: participant
+  participant_stratified_folds: 5
+  participant_bootstrap_repetitions: 5000
+  permutation_repetitions: 5000
+  false_discovery_rate: 0.05
+  continuous_smallest_effect: 0.20
+  prediction_smallest_auc_difference: 0.05
+  exact_permutation_plus_one: true
+
+clinical_transfer:
+  retrain_representation: false
+  retrain_scaler: false
+  retrain_state_dictionary: false
+  individual_diagnostic_reclassification: false
