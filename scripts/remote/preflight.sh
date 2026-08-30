@@ -33,7 +33,7 @@ validate_identity
 require_parent_storage
 
 note "identity=$(id -un)@$(hostname)"
-note "os=$(awk -F= '$1 == \"PRETTY_NAME\" {gsub(/^\"|\"$/, \"\", $2); print $2}' /etc/os-release)"
+note "os=$(awk -F= '$1 == "PRETTY_NAME" {gsub(/^"|"$/, "", $2); print $2}' /etc/os-release)"
 note "canonical_parent=$CANONICAL_PARENT"
 note "work_parent=$WORK_PARENT"
 note "checkpoint_parent=$CHECKPOINT_PARENT"
