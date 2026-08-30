@@ -10,7 +10,8 @@ derived arrays will remain on the university storage system.
 - Scientific gates: none. Technical validation and provenance checks remain active.
 - Local implementation: integrated for the complete phase graph and its technical
   boundaries; external-data execution remains unstarted.
-- GitHub synchronization: pending initial validated commit.
+- GitHub synchronization: validated implementation published on `main`; the local
+  branch tracks `origin/main`.
 - Server roots: the exact canonical, work, and checkpoint project directories are
   still unconfirmed.
 - Server deployment: not yet started.

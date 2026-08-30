@@ -472,12 +472,13 @@ No server deployment, queue launch, or real-data acquisition has started. The
 reviewed Python 3.11/CUDA 12.6 lock and BrainLM revision/file hashes are already
 pinned; they are not remaining prerequisites.
 
-Global launch prerequisites are:
+The reviewed initial implementation is now published on GitHub. Remaining global
+launch prerequisites are:
 
 1. User confirmation of the exact canonical, work, and checkpoint project roots,
    followed by recording the same three values in `configs/server.yaml`.
-2. A reviewed initial GitHub push and one exact commit selected for
-   content-addressed deployment.
+2. Selection of the exact published commit for content-addressed deployment after
+   the server-root values are recorded.
 
 External dataset/phase blockers and limitations remain explicit:
 
