@@ -17,7 +17,7 @@ MANIFEST_DIRECTORY = ".acquisition"
 MANIFEST_JSON = f"{MANIFEST_DIRECTORY}/manifest.json"
 MANIFEST_SHA256 = f"{MANIFEST_DIRECTORY}/MANIFEST.sha256"
 PROVENANCE_JSON = f"{MANIFEST_DIRECTORY}/provenance.json"
-COMPLETION_MARKER = ".complete.json"
+COMPLETION_MARKER = f"{MANIFEST_DIRECTORY}/COMPLETE.json"
 EXCLUDED_ROOTS = {".git", MANIFEST_DIRECTORY}
 
 
@@ -77,9 +77,6 @@ def iter_raw_files(root: str | Path) -> Iterator[tuple[str, Path]]:
                 raise ManifestError(f"directory symlinks are forbidden in raw releases: {relative}")
         for file_name in sorted(file_names):
             path = current_path / file_name
-            relative_parts = path.relative_to(release).parts
-            if relative_parts == (COMPLETION_MARKER,):
-                continue
             if path.name.endswith(".part"):
                 raise ManifestError(f"unfinished partial file present: {path.relative_to(release)}")
             if path.is_symlink() and not path.is_file():

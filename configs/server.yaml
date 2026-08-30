@@ -47,10 +47,11 @@ runtime:
   model_environment_file: cache/models/model_paths.env
   brainlm_checkpoint_stage: fmri_only
 
-# These externally supplied assets are required only when the fMRI phase starts.
-# The queue hashes both files and binds the explicit timing convention into the
-# fMRI phase identity.  Leave them null until their exact approved locations and
-# the ds006623 timing-table index origin have been verified.
+# Legacy static fallback for fMRI inputs. The recommended late-bound path is a
+# reviewed external YAML/JSON manifest passed with --fmri-input-manifest, which
+# lets earlier phases use an immutable run ID while these values remain unresolved.
+# Leave all values null when using the external manifest; the queue rejects mixed
+# authorities. Either route hashes both assets and the explicit timing convention.
 fmri_inputs:
   ukb424_atlas_path: null
   ukb424_coordinates_path: null

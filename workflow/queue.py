@@ -12,14 +12,15 @@ import argparse
 import getpass
 import json
 import os
-import shutil
+import re
 import socket
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .phases import PHASE_BY_NAME, PHASES, PhaseSpec, select_phases
@@ -41,6 +42,14 @@ from .state import (
     validate_success_marker,
 )
 
+APPROVED_REPOSITORIES = {
+    "https://github.com/pwa209/Neural-Manifolds",
+    "https://github.com/pwa209/Neural-Manifolds.git",
+}
+EXACT_COMMIT_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+SOURCE_MANIFEST_LINE = re.compile(r"([0-9a-f]{64})  (.+)")
+MAX_SOURCE_MANIFEST_BYTES = 16 * 1024 * 1024
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -55,6 +64,113 @@ def safe_repo_file(repo_root: Path, value: str, *, label: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"{label} must reside inside the deployed repository: {path}") from exc
     return path
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate JSON key: {key}")
+        document[key] = value
+    return document
+
+
+def verify_deployed_source(repo_root: Path, source_manifest: Path) -> dict[str, Any]:
+    """Rehash every source-manifest entry and validate exact release provenance."""
+
+    expected_manifest = repo_root / "SOURCE_MANIFEST.sha256"
+    if source_manifest != expected_manifest:
+        raise ValueError(f"source manifest must be exactly {expected_manifest}")
+    try:
+        manifest_status = source_manifest.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"deployed source manifest is missing: {source_manifest}") from exc
+    if stat.S_ISLNK(manifest_status.st_mode) or not stat.S_ISREG(manifest_status.st_mode):
+        raise ValueError(f"deployed source manifest must be a regular file: {source_manifest}")
+    if manifest_status.st_size <= 0 or manifest_status.st_size > MAX_SOURCE_MANIFEST_BYTES:
+        raise ValueError(
+            f"deployed source manifest has unsafe size {manifest_status.st_size}: {source_manifest}"
+        )
+    manifest_bytes = source_manifest.read_bytes()
+    if b"\x00" in manifest_bytes or b"\r" in manifest_bytes or not manifest_bytes.endswith(b"\n"):
+        raise ValueError("source manifest must be NUL-free, LF-terminated UTF-8 text")
+    try:
+        manifest_text = manifest_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("source manifest must be valid UTF-8") from exc
+
+    entries: dict[str, str] = {}
+    for line_number, line in enumerate(manifest_text[:-1].split("\n"), start=1):
+        match = SOURCE_MANIFEST_LINE.fullmatch(line)
+        if match is None:
+            raise ValueError(f"malformed source manifest line {line_number}")
+        expected_hash, raw_path = match.groups()
+        if (
+            not raw_path
+            or "\\" in raw_path
+            or any(ord(character) < 32 or ord(character) == 127 for character in raw_path)
+        ):
+            raise ValueError(f"unsafe source manifest path on line {line_number}: {raw_path!r}")
+        relative = PurePosixPath(raw_path)
+        if (
+            relative.is_absolute()
+            or re.match(r"[A-Za-z]:/", raw_path) is not None
+            or raw_path != relative.as_posix()
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or raw_path == "SOURCE_MANIFEST.sha256"
+        ):
+            raise ValueError(f"unsafe source manifest path on line {line_number}: {raw_path!r}")
+        if raw_path in entries:
+            raise ValueError(f"duplicate source manifest path: {raw_path}")
+        entries[raw_path] = expected_hash
+    if not entries:
+        raise ValueError("source manifest contains no file entries")
+    if "SOURCE_PROVENANCE.json" not in entries:
+        raise ValueError("source manifest must include SOURCE_PROVENANCE.json")
+
+    for raw_path, expected_hash in entries.items():
+        candidate = repo_root
+        for index, component in enumerate(PurePosixPath(raw_path).parts):
+            candidate = candidate / component
+            try:
+                candidate_status = candidate.lstat()
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(f"source manifest entry is missing: {raw_path}") from exc
+            if stat.S_ISLNK(candidate_status.st_mode):
+                raise ValueError(f"source manifest entry traverses a symlink: {raw_path}")
+            is_final = index == len(PurePosixPath(raw_path).parts) - 1
+            expected_type = stat.S_ISREG if is_final else stat.S_ISDIR
+            if not expected_type(candidate_status.st_mode):
+                raise ValueError(f"source manifest entry has an invalid file type: {raw_path}")
+        actual_hash = sha256_file(candidate)
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"source manifest SHA-256 mismatch for {raw_path}: "
+                f"expected {expected_hash}, got {actual_hash}"
+            )
+
+    provenance_path = repo_root / "SOURCE_PROVENANCE.json"
+    if provenance_path.stat().st_size > 1024 * 1024:
+        raise ValueError("SOURCE_PROVENANCE.json exceeds the 1 MiB safety limit")
+    with provenance_path.open("r", encoding="utf-8") as stream:
+        provenance = json.load(stream, object_pairs_hook=_unique_json_object)
+    if not isinstance(provenance, dict) or provenance.get("schema_version") != 1:
+        raise ValueError("SOURCE_PROVENANCE.json must be a schema-version 1 object")
+    repository = provenance.get("repository")
+    commit = provenance.get("commit")
+    if not isinstance(repository, str) or repository not in APPROVED_REPOSITORIES:
+        raise ValueError("SOURCE_PROVENANCE.json names an unapproved repository")
+    if not isinstance(commit, str) or EXACT_COMMIT_PATTERN.fullmatch(commit) is None:
+        raise ValueError("SOURCE_PROVENANCE.json commit must be an exact lowercase object id")
+    if repo_root.name != commit:
+        raise ValueError("SOURCE_PROVENANCE.json commit does not match the release directory")
+    return {
+        "repository": repository,
+        "commit": commit,
+        "files": len(entries),
+        "manifest_sha256": sha256_file(source_manifest),
+    }
 
 
 def verify_remote_identity() -> None:
@@ -124,24 +240,111 @@ def verify_server_config(path: Path, roots: ServerRoots) -> dict[str, Any]:
     return document
 
 
+def load_fmri_input_manifest(path: Path) -> tuple[Path, dict[str, Any]]:
+    """Load one strict, absolute YAML/JSON fMRI late-input contract."""
+
+    if not path.is_absolute():
+        raise ValueError("--fmri-input-manifest must be an absolute path")
+    resolved = path.resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError(f"fMRI input manifest is not a regular file: {resolved}")
+
+    suffix = resolved.suffix.lower()
+    with resolved.open("r", encoding="utf-8") as stream:
+        if suffix == ".json":
+
+            def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                document: dict[str, Any] = {}
+                for key, value in pairs:
+                    if key in document:
+                        raise ValueError(f"duplicate key in fMRI input manifest: {key}")
+                    document[key] = value
+                return document
+
+            document = json.load(stream, object_pairs_hook=unique_json_object)
+        elif suffix in {".yaml", ".yml"}:
+            try:
+                import yaml
+            except ModuleNotFoundError as exc:  # pragma: no cover - declared dependency
+                raise RuntimeError("PyYAML is required to load the fMRI input manifest") from exc
+
+            class UniqueKeyLoader(yaml.SafeLoader):
+                pass
+
+            def construct_unique_mapping(
+                loader: Any, node: Any, deep: bool = False
+            ) -> dict[str, Any]:
+                loader.flatten_mapping(node)
+                result: dict[str, Any] = {}
+                for key_node, value_node in node.value:
+                    key = loader.construct_object(key_node, deep=deep)
+                    if not isinstance(key, str):
+                        raise ValueError("fMRI input manifest keys must be strings")
+                    if key in result:
+                        raise ValueError(f"duplicate key in fMRI input manifest: {key}")
+                    result[key] = loader.construct_object(value_node, deep=deep)
+                return result
+
+            UniqueKeyLoader.add_constructor(
+                yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_unique_mapping
+            )
+            document = yaml.load(stream, Loader=UniqueKeyLoader)
+        else:
+            raise ValueError("fMRI input manifest must have a .json, .yaml, or .yml suffix")
+
+    if not isinstance(document, dict):
+        raise ValueError("fMRI input manifest must be a mapping")
+    expected_keys = {
+        "schema_version",
+        "ukb424_atlas_path",
+        "ukb424_coordinates_path",
+        "ds006623_timing_index_origin",
+    }
+    if set(document) != expected_keys:
+        missing = sorted(expected_keys - set(document))
+        unknown = sorted(set(document) - expected_keys)
+        raise ValueError(
+            f"fMRI input manifest keys do not match schema; missing={missing}, unknown={unknown}"
+        )
+    if document.get("schema_version") != 1:
+        raise ValueError("fMRI input manifest schema_version must equal 1")
+    return resolved, document
+
+
 def verified_fmri_input_fingerprints(
-    phase: PhaseSpec, server_config: dict[str, Any]
+    phase: PhaseSpec,
+    server_config: dict[str, Any],
+    fmri_input_manifest: Path | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     """Hash fMRI-only external assets and bind the explicit timing convention."""
 
     if phase.name != "fmri":
         return {}, {}
     configured = server_config.get("fmri_inputs")
-    if not isinstance(configured, dict):
+    fingerprints: dict[str, dict[str, Any]] = {}
+    if fmri_input_manifest is not None:
+        if isinstance(configured, dict) and any(value is not None for value in configured.values()):
+            raise ValueError(
+                "ambiguous fMRI inputs: use either --fmri-input-manifest or non-null "
+                "configs/server.yaml fmri_inputs, not both"
+            )
+        manifest_path, configured = load_fmri_input_manifest(fmri_input_manifest)
+        fingerprints["fmri_input:manifest"] = {
+            "path": str(manifest_path),
+            "sha256": sha256_file(manifest_path),
+            "size": manifest_path.stat().st_size,
+        }
+    elif not isinstance(configured, dict):
         raise ValueError(
-            "the fMRI phase requires configs/server.yaml fmri_inputs; earlier phases do not"
+            "the fMRI phase requires --fmri-input-manifest or configs/server.yaml "
+            "fmri_inputs; earlier phases do not"
         )
     asset_contract = {
         "ukb424_atlas_path": "NEURAL_MANIFOLDS_UKB424_ATLAS",
         "ukb424_coordinates_path": "NEURAL_MANIFOLDS_UKB424_COORDINATES",
     }
-    fingerprints: dict[str, dict[str, Any]] = {}
     environment: dict[str, str] = {}
+    resolved_assets: list[Path] = []
     for key, environment_name in asset_contract.items():
         value = configured.get(key)
         if not isinstance(value, str) or not value or not Path(value).is_absolute():
@@ -151,12 +354,17 @@ def verified_fmri_input_fingerprints(
         source = Path(value).resolve(strict=True)
         if not source.is_file():
             raise ValueError(f"configured fMRI input is not a regular file: {source}")
+        if source.stat().st_size <= 0:
+            raise ValueError(f"configured fMRI input is empty: {source}")
+        resolved_assets.append(source)
         fingerprints[f"fmri_input:{key}"] = {
             "path": str(source),
             "sha256": sha256_file(source),
             "size": source.stat().st_size,
         }
         environment[environment_name] = str(source)
+    if len(set(resolved_assets)) != len(resolved_assets):
+        raise ValueError("the fMRI atlas and coordinate table must be distinct files")
     origin = configured.get("ds006623_timing_index_origin")
     if not isinstance(origin, int) or isinstance(origin, bool) or origin not in {0, 1}:
         raise ValueError("the fMRI phase requires fmri_inputs.ds006623_timing_index_origin=0 or 1")
@@ -167,6 +375,41 @@ def verified_fmri_input_fingerprints(
     }
     environment["NEURAL_MANIFOLDS_DS006623_TIMING_INDEX_ORIGIN"] = str(origin)
     return fingerprints, environment
+
+
+def bind_fmri_late_inputs(
+    *,
+    state_root: Path,
+    run_id: str,
+    fingerprints: dict[str, dict[str, Any]],
+    environment: dict[str, str],
+) -> Path:
+    """Atomically bind reviewed fMRI late inputs without changing the base run contract."""
+
+    basis = {
+        "schema_version": 1,
+        "kind": "fmri_late_input_contract",
+        "run_id": run_id,
+        "fingerprints": fingerprints,
+        "environment": environment,
+    }
+    basis_sha256 = sha256_json(basis)
+    contract_path = state_root / "late-inputs" / "fmri.json"
+    if contract_path.is_file():
+        existing = load_json(contract_path)
+        existing_basis = {key: existing.get(key) for key in basis}
+        if existing.get("basis_sha256") != sha256_json(existing_basis):
+            raise RuntimeError(f"fMRI late-input contract is invalid or changed: {contract_path}")
+        if existing.get("basis_sha256") != basis_sha256:
+            raise RuntimeError(
+                "fMRI late inputs differ from those already bound to this run id; use a new run id"
+            )
+        return contract_path
+    atomic_write_json(
+        contract_path,
+        {**basis, "basis_sha256": basis_sha256, "created_at": utc_now()},
+    )
+    return contract_path
 
 
 def verified_model_fingerprints(phase: PhaseSpec) -> dict[str, dict[str, int | str]]:
@@ -253,7 +496,7 @@ def verified_model_fingerprints(phase: PhaseSpec) -> dict[str, dict[str, int | s
 
 def build_phase_command(
     *,
-    executable: str,
+    cli_prefix: Sequence[str],
     phase: PhaseSpec,
     study: Path,
     datasets: Path,
@@ -261,7 +504,7 @@ def build_phase_command(
     run_id: str,
 ) -> list[str]:
     return [
-        executable,
+        *cli_prefix,
         "run-phase",
         "--phase",
         phase.cli_phase,
@@ -277,10 +520,10 @@ def build_phase_command(
 
 
 def build_validate_command(
-    *, executable: str, study: Path, datasets: Path, server: Path
+    *, cli_prefix: Sequence[str], study: Path, datasets: Path, server: Path
 ) -> list[str]:
     return [
-        executable,
+        *cli_prefix,
         "validate-config",
         "--study",
         str(study),
@@ -749,8 +992,14 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--datasets", default="configs/datasets.yaml")
     value.add_argument("--models", default="configs/models.yaml")
     value.add_argument("--server", default="configs/server.yaml")
+    value.add_argument(
+        "--fmri-input-manifest",
+        help=(
+            "absolute reviewed YAML/JSON manifest for fMRI-only late inputs; "
+            "not part of the base run contract"
+        ),
+    )
     value.add_argument("--source-manifest", default="SOURCE_MANIFEST.sha256")
-    value.add_argument("--cli", default="neural-manifolds")
     value.add_argument("--from-phase", choices=tuple(PHASE_BY_NAME))
     value.add_argument("--through-phase", choices=tuple(PHASE_BY_NAME))
     value.add_argument("--only-phase", choices=tuple(PHASE_BY_NAME))
@@ -778,14 +1027,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         checkpoint_root=args.checkpoint_root,
     )
     run_id = validate_run_id(args.run_id)
-    repo_root = Path(args.repo_root).resolve(strict=False)
-    if not repo_root.is_absolute():
+    requested_repo_root = Path(args.repo_root)
+    if not requested_repo_root.is_absolute():
         raise ValueError("--repo-root must be absolute")
+    if ".." in requested_repo_root.parts:
+        raise ValueError("--repo-root cannot contain '..'")
+    repo_root = requested_repo_root.resolve(strict=False)
     study = safe_repo_file(repo_root, args.study, label="study config")
     datasets = safe_repo_file(repo_root, args.datasets, label="dataset config")
     models = safe_repo_file(repo_root, args.models, label="model config")
     server = safe_repo_file(repo_root, args.server, label="server config")
     source_manifest = safe_repo_file(repo_root, args.source_manifest, label="source manifest")
+    source_root = repo_root / "src"
+    source_cli = source_root / "neural_manifolds" / "cli.py"
+    workflow_module = repo_root / "workflow" / "queue.py"
+    for label, path in (("source CLI", source_cli), ("workflow queue", workflow_module)):
+        if not path.is_file():
+            raise FileNotFoundError(f"deployed {label} is missing: {path}")
+    runtime_python = Path(sys.executable)
+    if not runtime_python.is_absolute() or not runtime_python.is_file():
+        raise RuntimeError(
+            f"queue Python executable is not an absolute regular file: {runtime_python}"
+        )
+    cli_prefix = (str(runtime_python), "-s", "-P", "-m", "neural_manifolds.cli")
+    source_python_path = os.pathsep.join((str(source_root), str(repo_root)))
+    fmri_input_manifest: Path | None = None
+    if args.fmri_input_manifest is not None:
+        fmri_input_manifest = Path(args.fmri_input_manifest)
+        if not fmri_input_manifest.is_absolute():
+            raise ValueError("--fmri-input-manifest must be an absolute path")
     selected = select_phases(
         from_phase=args.from_phase,
         through_phase=args.through_phase,
@@ -802,10 +1072,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in config_paths:
         if not path.is_file():
             raise FileNotFoundError(path)
-    server_config = verify_server_config(server, roots)
     commands = [
         build_phase_command(
-            executable=args.cli,
+            cli_prefix=cli_prefix,
             phase=phase,
             study=study,
             datasets=datasets,
@@ -816,6 +1085,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
 
     if args.dry_run:
+        verify_server_config(server, roots)
         plan = {
             "mode": "dry-run",
             "run_id": run_id,
@@ -826,6 +1096,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "checkpoint": str(roots.checkpoint),
             },
             "state_root": str(state_root),
+            "fmri_input_manifest": (
+                str(fmri_input_manifest) if fmri_input_manifest is not None else None
+            ),
             "phases": [
                 {
                     "name": phase.name,
@@ -850,25 +1123,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise FileNotFoundError(
             f"deployment source manifest is required before execution: {source_manifest}"
         )
-    if shutil.which(args.cli) is None:
-        raise FileNotFoundError(f"workflow CLI is not on PATH: {args.cli}")
-
+    source_verification = verify_deployed_source(repo_root, source_manifest)
+    server_config = verify_server_config(server, roots)
     validation = build_validate_command(
-        executable=args.cli, study=study, datasets=datasets, server=server
+        cli_prefix=cli_prefix, study=study, datasets=datasets, server=server
     )
-    validation_result = subprocess.run(validation, cwd=repo_root, check=False)
+    validation_env = dict(os.environ)
+    validation_env["PYTHONPATH"] = source_python_path
+    validation_result = subprocess.run(validation, cwd=repo_root, env=validation_env, check=False)
     if validation_result.returncode != 0:
         raise RuntimeError("configuration validation failed")
     if args.check_only:
-        print("check-only passed: identity, roots, deployment manifest, CLI, and configuration")
+        for phase in selected:
+            verified_fmri_input_fingerprints(
+                phase, server_config, fmri_input_manifest=fmri_input_manifest
+            )
+            verified_model_fingerprints(phase)
+        print(
+            "check-only passed: identity, roots, fully rehashed deployed source "
+            f"({source_verification['files']} files), CLI, configuration, and selected "
+            "phase-specific inputs"
+        )
         return 0
 
     config_fingerprints = file_fingerprints(config_paths)
     source_manifest_sha256 = sha256_file(source_manifest)
-    base_env = dict(os.environ)
+    base_env = dict(validation_env)
     base_env.update(
         {
             "PYTHONUNBUFFERED": "1",
+            "PYTHONPATH": source_python_path,
             "NEURAL_MANIFOLDS_CANONICAL_ROOT": str(roots.canonical),
             "NEURAL_MANIFOLDS_RAW_ROOT": str(roots.raw),
             "NEURAL_MANIFOLDS_WORK_ROOT": str(roots.work),
@@ -894,7 +1178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for phase, command in zip(selected, commands, strict=True):
             fmri_input_fingerprints, fmri_environment = verified_fmri_input_fingerprints(
-                phase, server_config
+                phase, server_config, fmri_input_manifest=fmri_input_manifest
             )
             phase_config_fingerprints = {
                 **config_fingerprints,
@@ -904,6 +1188,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             dependency_hashes = dependency_markers(
                 phase=phase, state_root=state_root, phase_hashes=phase_hashes
             )
+            if phase.name == "fmri":
+                bind_fmri_late_inputs(
+                    state_root=state_root,
+                    run_id=run_id,
+                    fingerprints=fmri_input_fingerprints,
+                    environment=fmri_environment,
+                )
             digest = phase_hash(
                 phase_name=phase.name,
                 command=command,

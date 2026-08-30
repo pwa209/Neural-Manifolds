@@ -1,5 +1,12 @@
 # Data acquisition phases
 
+The integrated server queue's `audit -> acquire` sequence is the canonical
+production route. It writes the run-scoped acquisition summary and receipt,
+attempts every configured open release before reporting technical failures, and
+records restricted releases as dataset-scoped access blocks. The shell scripts in
+this directory expose the same acquisition engine for endpoint diagnosis and
+manual recovery; do not use them to create a second competing production queue.
+
 These scripts materialise raw data directly at the absolute path supplied in
 `NEURAL_MANIFOLDS_RAW_ROOT`. Use the project's approved NAS root; the scripts do
 not invent or register a server path.
@@ -19,8 +26,10 @@ tested. Never save credentials in this repository, a command argument, an
 environment variable, or a log.
 
 Raw releases live at `<root>/<dataset-id>/<version>/`. A completed directory is
-immutable by policy: reruns validate it and never update it in place. Interrupted
-downloads remain under `<root>/.staging/` and resume on the next run.
+immutable by policy: after its manifest and `.acquisition/COMPLETE.json` validate,
+all write permission bits are removed; reruns revalidate it and never update it in
+place. Interrupted downloads and `.part` files remain writable under
+`<root>/.staging/` and resume on the next run.
 
 The OSF somatosensory project is public but is a mutable project rather than a
 registration/release, and its API exposes no named dataset licence. The first

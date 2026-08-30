@@ -11,17 +11,23 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
+import stat
 import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -34,6 +40,11 @@ APPROVED_REPOSITORIES = {
 LABRAM_URL_PREFIX = "https://raw.githubusercontent.com/935963004/LaBraM/"
 BRAINLM_URL_PREFIX = "https://huggingface.co/vandijklab/brainlm/resolve/"
 BRAINLM_LICENSE = "CC-BY-NC-ND-4.0"
+SOURCE_MANIFEST_NAME = "SOURCE_MANIFEST.json"
+MODEL_CACHE_LOCK_NAME = ".model_cache.lock"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+LOCAL_GIT_TIMEOUT_SECONDS = 60
+NETWORK_GIT_TIMEOUT_SECONDS = 300
 
 
 def canonical_json(value: Any) -> str:
@@ -48,6 +59,34 @@ def atomic_write(path: Path, content: str) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+@contextmanager
+def exclusive_model_cache_lock(
+    cache: Path, *, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+) -> Iterator[Path]:
+    """Serialise all mutations of the shared, content-addressed model cache.
+
+    ``filelock`` uses an operating-system lock, so an abandoned lock file does
+    not block recovery after a process exits.  The bounded timeout also prevents
+    a second bootstrap from waiting indefinitely behind a long or wedged download.
+    """
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("model-cache lock timeout must be finite and positive")
+    cache.mkdir(parents=True, exist_ok=True)
+    lock_path = cache / MODEL_CACHE_LOCK_NAME
+    lock = FileLock(str(lock_path), timeout=timeout)
+    try:
+        lock.acquire()
+    except FileLockTimeout as exc:
+        raise RuntimeError(
+            f"model cache is locked by another bootstrap after {timeout:g} seconds: {lock_path}"
+        ) from exc
+    try:
+        yield lock_path
+    finally:
+        lock.release()
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -68,20 +107,48 @@ def git_blob_sha1(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def run_git(git: str, *arguments: str, cwd: Path | None = None) -> str:
+def run_git(
+    git: str,
+    *arguments: str,
+    cwd: Path | None = None,
+    timeout: int = LOCAL_GIT_TIMEOUT_SECONDS,
+) -> str:
+    try:
+        result = subprocess.run(
+            [git, *arguments],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git {' '.join(arguments)} exceeded the bounded {timeout}-second timeout"
+        ) from exc
+    if result.returncode:
+        stderr = result.stderr.strip()
+        raise RuntimeError(f"git {' '.join(arguments)} failed: {stderr}")
+    return result.stdout.strip()
+
+
+def require_clean_pinned_checkout(git: str, checkout: Path, revision: str) -> None:
     result = subprocess.run(
-        [git, *arguments],
-        cwd=cwd,
+        [git, "diff", "--no-ext-diff", "--quiet", revision, "--"],
+        cwd=checkout,
         check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=LOCAL_GIT_TIMEOUT_SECONDS,
     )
+    if result.returncode == 1:
+        raise RuntimeError(f"cached source checkout has tracked changes: {checkout}")
     if result.returncode:
-        stderr = result.stderr.strip()
-        raise RuntimeError(f"git {' '.join(arguments)} failed: {stderr}")
-    return result.stdout.strip()
+        raise RuntimeError(f"could not verify cached source checkout: {result.stderr.strip()}")
 
 
 def load_models(path: Path) -> dict[str, dict[str, Any]]:
@@ -123,51 +190,215 @@ def load_models(path: Path) -> dict[str, dict[str, Any]]:
     return validated
 
 
-def tracked_inventory(git: str, checkout: Path) -> dict[str, Any]:
+def tracked_names(git: str, checkout: Path) -> list[str]:
     output = subprocess.run(
         [git, "ls-files", "-z"],
         cwd=checkout,
         check=True,
         stdout=subprocess.PIPE,
+        timeout=LOCAL_GIT_TIMEOUT_SECONDS,
     ).stdout
     names = sorted(item.decode("utf-8") for item in output.split(b"\0") if item)
+    if SOURCE_MANIFEST_NAME in names:
+        raise RuntimeError(
+            f"upstream source tracks reserved cache inventory name: {SOURCE_MANIFEST_NAME}"
+        )
+    return names
+
+
+def safe_tracked_path(checkout: Path, name: str) -> Path:
+    relative = PurePosixPath(name)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or relative == PurePosixPath(".")
+        or ".." in relative.parts
+        or ".git" in relative.parts
+    ):
+        raise ValueError(f"unsafe tracked source path: {name!r}")
+    path = checkout.joinpath(*relative.parts)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"tracked source path is not a regular file: {path}")
+    checkout_root = checkout.resolve(strict=True)
+    resolved = path.resolve(strict=True)
+    if not resolved.is_relative_to(checkout_root):
+        raise RuntimeError(f"tracked source path escapes its checkout: {path}")
+    return path
+
+
+def verify_source_tree_coverage(
+    checkout: Path,
+    tracked: list[str],
+    *,
+    manifest_expected: bool | None,
+) -> None:
+    """Reject every physical checkout entry not covered by the source inventory.
+
+    Git status is insufficient here because ignored files are deliberately omitted,
+    yet an ignored Python module could still affect imports from the cached source.
+    Only Git's own top-level ``.git`` directory and our generated manifest are exempt.
+    ``manifest_expected=None`` permits a resumable pre-publication checkout with or
+    without a manifest left by an interrupted prior attempt.
+    """
+
+    if checkout.is_symlink() or not checkout.is_dir():
+        raise RuntimeError(f"source checkout must be a regular directory: {checkout}")
+    physical_files: list[str] = []
+    manifest_seen = False
+    git_directory_seen = False
+
+    def visit(directory: Path, relative_parts: tuple[str, ...]) -> None:
+        nonlocal git_directory_seen, manifest_seen
+        try:
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda item: item.name)
+        except OSError as exc:
+            raise RuntimeError(f"could not inspect cached source directory: {directory}") from exc
+        for entry in entries:
+            relative = PurePosixPath(*relative_parts, entry.name).as_posix()
+            try:
+                mode = entry.stat(follow_symlinks=False).st_mode
+            except OSError as exc:
+                raise RuntimeError(f"could not inspect cached source entry: {relative}") from exc
+            if not relative_parts and entry.name == ".git":
+                if entry.is_symlink() or not stat.S_ISDIR(mode):
+                    raise RuntimeError(
+                        f"cached source .git entry is not a regular directory: {checkout}"
+                    )
+                git_directory_seen = True
+                continue
+            if entry.is_symlink() or stat.S_ISLNK(mode):
+                raise RuntimeError(f"cached source contains a symbolic link: {relative}")
+            if stat.S_ISDIR(mode):
+                visit(Path(entry.path), (*relative_parts, entry.name))
+                continue
+            if not stat.S_ISREG(mode):
+                raise RuntimeError(f"cached source contains a special file: {relative}")
+            if relative == SOURCE_MANIFEST_NAME:
+                manifest_seen = True
+                continue
+            physical_files.append(relative)
+
+    visit(checkout, ())
+    if not git_directory_seen:
+        raise RuntimeError(f"cached source checkout has no regular .git directory: {checkout}")
+    if manifest_expected is True and not manifest_seen:
+        raise RuntimeError(
+            f"cached source has no regular inventory: {checkout / SOURCE_MANIFEST_NAME}"
+        )
+    if manifest_expected is False and manifest_seen:
+        raise RuntimeError(f"cached source unexpectedly contains an inventory: {checkout}")
+
+    tracked_set = set(tracked)
+    physical_set = set(physical_files)
+    unexpected = sorted(physical_set - tracked_set)
+    if unexpected:
+        raise RuntimeError(f"cached source contains untracked or ignored files: {unexpected}")
+    missing = sorted(tracked_set - physical_set)
+    if missing:
+        raise RuntimeError(f"cached source is missing tracked files: {missing}")
+
+
+def tracked_inventory(git: str, checkout: Path) -> dict[str, Any]:
+    names = tracked_names(git, checkout)
+    verify_source_tree_coverage(checkout, names, manifest_expected=None)
     files: list[dict[str, Any]] = []
     for name in names:
-        path = checkout / name
-        if not path.is_file():
-            raise FileNotFoundError(f"tracked source file is missing: {path}")
+        path = safe_tracked_path(checkout, name)
         files.append({"path": name, "sha256": sha256_file(path), "size": path.stat().st_size})
     payload = {"schema_version": 1, "files": files}
-    atomic_write(checkout / "SOURCE_MANIFEST.json", json.dumps(payload, indent=2) + "\n")
+    manifest = checkout / SOURCE_MANIFEST_NAME
+    atomic_write(manifest, json.dumps(payload, indent=2) + "\n")
+    verify_source_tree_coverage(checkout, names, manifest_expected=True)
     return {
-        "path": str(checkout / "SOURCE_MANIFEST.json"),
-        "sha256": sha256_file(checkout / "SOURCE_MANIFEST.json"),
+        "path": str(manifest),
+        "sha256": sha256_file(manifest),
         "file_count": len(files),
+    }
+
+
+def verify_tracked_inventory(git: str, checkout: Path, manifest: Path) -> dict[str, Any]:
+    """Rehash every pinned source file against its recorded cache inventory."""
+
+    if manifest.is_symlink() or not manifest.is_file():
+        raise RuntimeError(f"cached source has no regular inventory: {manifest}")
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cached source inventory is unreadable: {manifest}") from exc
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "files"}:
+        raise RuntimeError(f"cached source inventory has an invalid document shape: {manifest}")
+    if payload["schema_version"] != 1 or not isinstance(payload["files"], list):
+        raise RuntimeError(f"cached source inventory must use schema_version 1: {manifest}")
+
+    entries: dict[str, tuple[str, int]] = {}
+    recorded_order: list[str] = []
+    for item in payload["files"]:
+        if not isinstance(item, dict) or set(item) != {"path", "sha256", "size"}:
+            raise RuntimeError(f"cached source inventory contains an invalid entry: {manifest}")
+        name, digest, size = item["path"], item["sha256"], item["size"]
+        if not isinstance(name, str) or not name:
+            raise RuntimeError(f"cached source inventory contains an invalid path: {manifest}")
+        if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
+            raise RuntimeError(f"cached source inventory contains an invalid SHA-256: {manifest}")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise RuntimeError(f"cached source inventory contains an invalid size: {manifest}")
+        if name in entries:
+            raise RuntimeError(f"cached source inventory contains duplicate path {name!r}")
+        entries[name] = (digest, size)
+        recorded_order.append(name)
+
+    expected_names = tracked_names(git, checkout)
+    if recorded_order != expected_names:
+        raise RuntimeError(
+            "cached source inventory paths do not exactly match the pinned Git checkout: "
+            f"{manifest}"
+        )
+    verify_source_tree_coverage(checkout, expected_names, manifest_expected=True)
+    for name in expected_names:
+        path = safe_tracked_path(checkout, name)
+        expected_digest, expected_size = entries[name]
+        actual_size = path.stat().st_size
+        if actual_size != expected_size:
+            raise RuntimeError(
+                f"cached source size mismatch for {name!r}: {actual_size} != {expected_size}"
+            )
+        actual_digest = sha256_file(path)
+        if actual_digest != expected_digest:
+            raise RuntimeError(f"cached source SHA-256 mismatch for {name!r}: {path}")
+    return {
+        "path": str(manifest),
+        "sha256": sha256_file(manifest),
+        "file_count": len(expected_names),
     }
 
 
 def ensure_checkout(
     *, git: str, name: str, repository: str, revision: str, target: Path, apply: bool
 ) -> dict[str, Any]:
+    if target.is_symlink():
+        raise RuntimeError(f"cached {name} checkout must not be a symbolic link: {target}")
     if target.is_dir():
+        configured_remote = run_git(git, "remote", "get-url", "origin", cwd=target)
+        if configured_remote != repository:
+            raise RuntimeError(f"cached {name} checkout has unexpected remote: {configured_remote}")
         actual = run_git(git, "rev-parse", "HEAD", cwd=target)
         if actual != revision:
             raise RuntimeError(f"cached {name} checkout is {actual}, expected {revision}")
-        manifest = target / "SOURCE_MANIFEST.json"
+        require_clean_pinned_checkout(git, target, revision)
+        manifest = target / SOURCE_MANIFEST_NAME
         if not manifest.is_file():
-            if not apply:
-                raise RuntimeError(f"cached {name} source has no inventory: {manifest}")
-            return tracked_inventory(git, target)
-        return {
-            "path": str(manifest),
-            "sha256": sha256_file(manifest),
-            "file_count": len(json.loads(manifest.read_text(encoding="utf-8"))["files"]),
-        }
+            raise RuntimeError(f"cached {name} source has no inventory: {manifest}")
+        return verify_tracked_inventory(git, target, manifest)
+    if target.exists():
+        raise RuntimeError(f"cached {name} checkout is not a directory: {target}")
     if not apply:
-        return {"path": str(target / "SOURCE_MANIFEST.json"), "status": "would_create"}
+        return {"path": str(target / SOURCE_MANIFEST_NAME), "status": "would_create"}
 
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.parent / f".{revision}.partial"
+    if partial.is_symlink():
+        raise RuntimeError(f"partial checkout must not be a symbolic link: {partial}")
     if partial.exists() and not (partial / ".git").is_dir():
         raise RuntimeError(f"partial checkout is not resumable Git state: {partial}")
     partial.mkdir(parents=True, exist_ok=True)
@@ -178,14 +409,24 @@ def ensure_checkout(
         configured_remote = run_git(git, "remote", "get-url", "origin", cwd=partial)
         if configured_remote != repository:
             raise RuntimeError(f"partial checkout has unexpected remote: {configured_remote}")
-    run_git(git, "fetch", "--quiet", "--depth", "1", "origin", revision, cwd=partial)
+    run_git(
+        git,
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        "origin",
+        revision,
+        cwd=partial,
+        timeout=NETWORK_GIT_TIMEOUT_SECONDS,
+    )
     run_git(git, "checkout", "--quiet", "--force", "--detach", "FETCH_HEAD", cwd=partial)
     actual = run_git(git, "rev-parse", "HEAD", cwd=partial)
     if actual != revision:
         raise RuntimeError(f"fetched {name} revision {actual}, expected {revision}")
     inventory = tracked_inventory(git, partial)
     partial.rename(target)
-    inventory["path"] = str(target / "SOURCE_MANIFEST.json")
+    inventory["path"] = str(target / SOURCE_MANIFEST_NAME)
     return inventory
 
 
@@ -197,6 +438,16 @@ def _download_once(url: str, partial: Path, *, timeout: int = 120) -> None:
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         status = getattr(response, "status", response.getcode())
+        if status not in {200, 206}:
+            raise urllib.error.URLError(f"unexpected HTTP status {status} for {url}")
+        if status == 206:
+            content_range = response.headers.get("Content-Range", "")
+            match = re.fullmatch(r"bytes (\d+)-(\d+)/(?:\d+|\*)", content_range)
+            expected_start = existing if existing else 0
+            if match is None or int(match.group(1)) != expected_start:
+                raise ValueError(
+                    f"server returned an invalid Content-Range for resume: {content_range!r}"
+                )
         mode = "ab" if existing and status == 206 else "wb"
         with partial.open(mode) as stream:
             while chunk := response.read(1024 * 1024):
@@ -214,7 +465,18 @@ def download_verified(
     minimum_bytes: int,
     apply: bool,
 ) -> dict[str, Any]:
+    if expected_sha256 is None and expected_git_blob_sha1 is None:
+        raise ValueError("a pinned artifact digest is required before download")
+    if expected_sha256 is not None and not SHA256_PATTERN.fullmatch(expected_sha256):
+        raise ValueError("expected artifact SHA-256 is invalid")
+    if expected_git_blob_sha1 is not None and not SHA1_PATTERN.fullmatch(expected_git_blob_sha1):
+        raise ValueError("expected artifact Git-blob SHA-1 is invalid")
+    if minimum_bytes < 0:
+        raise ValueError("minimum artifact size must not be negative")
+
     def validate(path: Path) -> tuple[str, int]:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"download is not a regular file: {path}")
         size = path.stat().st_size
         if size < minimum_bytes:
             raise ValueError(f"download is unexpectedly small ({size} bytes): {path}")
@@ -227,14 +489,33 @@ def download_verified(
                 raise ValueError(f"download Git-blob SHA-1 mismatch: {path}")
         return actual_sha256, size
 
+    if target.is_symlink():
+        raise RuntimeError(f"download target must not be a symbolic link: {target}")
     if target.is_file():
         digest, size = validate(target)
         return {"path": str(target), "sha256": digest, "size": size}
+    if target.exists():
+        raise RuntimeError(f"download target is not a regular file: {target}")
     if not apply:
         return {"path": str(target), "status": "would_download", "url": url}
 
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(f".{target.name}.partial")
+    if partial.is_symlink() or (partial.exists() and not partial.is_file()):
+        raise RuntimeError(f"download partial must be a regular file: {partial}")
+
+    # A previous process can be interrupted after receiving and fsyncing the last
+    # byte but before the atomic rename.  Verify that state before sending a Range
+    # request; otherwise an exact-length partial provokes a repeatable HTTP 416.
+    if partial.is_file():
+        try:
+            digest, size = validate(partial)
+        except ValueError:
+            pass
+        else:
+            os.replace(partial, target)
+            return {"path": str(target), "sha256": digest, "size": size}
+
     last_error: BaseException | None = None
     for attempt in range(1, 4):
         try:
@@ -242,6 +523,15 @@ def download_verified(
             digest, size = validate(partial)
             os.replace(partial, target)
             return {"path": str(target), "sha256": digest, "size": size}
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            # An invalid full-length or oversized partial may also elicit 416.
+            # It has already failed the pinned digest above, so restart cleanly.
+            if exc.code == 416:
+                partial.unlink(missing_ok=True)
+            if attempt == 3:
+                break
+            time.sleep(2**attempt)
         except (OSError, ValueError, urllib.error.URLError) as exc:
             last_error = exc
             if isinstance(exc, ValueError):
@@ -297,17 +587,22 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--git", default="git")
     value.add_argument("--stage", choices=("core", "fmri"), required=True)
     value.add_argument("--mode", choices=("check", "dry", "apply"), required=True)
+    value.add_argument(
+        "--lock-timeout-seconds",
+        type=float,
+        default=DEFAULT_LOCK_TIMEOUT_SECONDS,
+        help="bounded wait for the shared model-cache writer lock (apply mode only)",
+    )
     return value
 
 
-def main() -> int:
-    args = parser().parse_args()
-    config = Path(args.models).resolve(strict=True)
-    work_root = Path(args.work_root).resolve(strict=True)
-    models = load_models(config)
-    cache = work_root / "cache" / "models"
-    apply = args.mode == "apply"
-
+def operate_cache(
+    *,
+    args: argparse.Namespace,
+    models: dict[str, dict[str, Any]],
+    cache: Path,
+    apply: bool,
+) -> int:
     sources: dict[str, dict[str, Any]] = {}
     for name in ("labram_base", "brainlm"):
         model = models[name]
@@ -420,6 +715,19 @@ def main() -> int:
     print(f"model_manifest_sha256={manifest_sha}")
     print(f"model_environment={environment_path}")
     return 0
+
+
+def main() -> int:
+    args = parser().parse_args()
+    config = Path(args.models).resolve(strict=True)
+    work_root = Path(args.work_root).resolve(strict=True)
+    models = load_models(config)
+    cache = work_root / "cache" / "models"
+    apply = args.mode == "apply"
+    if apply:
+        with exclusive_model_cache_lock(cache, timeout=args.lock_timeout_seconds):
+            return operate_cache(args=args, models=models, cache=cache, apply=True)
+    return operate_cache(args=args, models=models, cache=cache, apply=False)
 
 
 if __name__ == "__main__":

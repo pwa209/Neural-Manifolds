@@ -394,6 +394,13 @@ The launcher automatically sources the generated, non-secret
 `WORK/cache/models/model_paths.env`; the queue rehashes the manifest, source
 inventories, and checkpoint before model-dependent phases.
 
+The shared hash-pinned runtime supplies dependencies, but it is not the authority
+for project source. The launcher replaces (rather than appends to) `PYTHONPATH`
+with `<DEPLOYED_RELEASE>/src:<DEPLOYED_RELEASE>`, verifies the imported CLI and
+queue file locations, and invokes both queue and phase commands as Python modules
+with user-site and unsafe-path injection disabled. Thus an older package copy in a
+dependency environment is harmlessly shadowed and cannot select stale phase code.
+
 Use one stable run ID and launch one phase at a time. After each tmux session exits,
 inspect `status.sh`, the attempt log, success receipt, artifact hashes, and storage
 usage before launching the next phase. This is operational review, not a scientific
@@ -429,9 +436,38 @@ Immediately before `fmri`, repeat `bootstrap_models.sh` with `--stage fmri`. Tha
 stage re-verifies the exact Hugging Face commit and the already pinned per-file
 BrainLM SHA-256 values. BrainLM material is used only for this non-commercial
 secondary analysis under CC-BY-NC-ND-4.0; it is never redistributed or downloaded
-during earlier phases. The fMRI phase still cannot start until the external UKB_424
-atlas, ordered coordinates, and timing-index origin are explicitly supplied and
-hashed.
+during earlier phases.
+
+The same immutable run ID may be established by `audit` while the external UKB_424
+atlas, ordered coordinates, and timing-index origin remain unresolved. Once these
+three inputs have been reviewed, copy `configs/fmri-inputs.template.yaml` to a
+small, versioned-by-name metadata location such as
+`<CHECKPOINT_ROOT>/metadata/fmri-inputs/<REVIEW_ID>.yaml` (or
+`<CANONICAL_ROOT>/metadata/fmri-inputs/<REVIEW_ID>.yaml`), replace every
+placeholder, and retain that reviewed file outside the deployed release and raw
+data tree. Then use its absolute path for all three fMRI launch steps:
+
+```bash
+bash scripts/remote/launch_queue.sh \
+  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
+  --work-root <CONFIRMED_WORK_ROOT> \
+  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --repo-root <DEPLOYED_RELEASE> --python <RUNTIME_PYTHON> \
+  --run-id <SAME_RUN_ID> --only-phase fmri \
+  --fmri-input-manifest <ABSOLUTE_REVIEWED_MANIFEST> --check-only
+# Inspect --dry-run, then repeat with --apply using the identical manifest path.
+```
+
+`--check-only` reads and validates the strict YAML/JSON schema, rehashes the
+manifest, atlas, coordinate table, and selected model cache, and performs no
+writes. On `--apply`, the queue additionally publishes the immutable resolved
+record at `<CHECKPOINT_ROOT>/queue/<RUN_ID>/late-inputs/fmri.json` before starting
+the phase. A changed manifest, asset, or origin under that run ID is rejected and
+requires a new run ID. The base run contract remains limited to the deployed
+source, repository configuration, roots, and release; late fMRI inputs never force
+earlier phases to use a different run ID. The legacy non-null `fmri_inputs` mapping
+in `configs/server.yaml` remains supported when no external manifest is supplied,
+but mixing the two authorities is rejected.
 
 To let the queue continue across several technically complete phases, replace
 `--only-phase` with `--from-phase <NAME> --through-phase <NAME>`. The same run ID
@@ -450,7 +486,8 @@ history.
   A restart will not duplicate it while that process is alive; an interrupted
   attempt gets a new numbered attempt.
 - Existing successes are reused only after command/source/config/dependency hashes
-  match and every artifact is rehashed.
+  match and every artifact is rehashed. The fMRI phase also requires its immutable
+  late-input record to match the manifest and asset hashes already bound to the run.
 - A zero exit code without an atomic, schema-valid phase receipt is a failure.
 - Acquisition retries are bounded and resume `.partial` content; no mutating command
   is blindly replayed after an ambiguous disconnect.

@@ -35,7 +35,10 @@ remote sequence is:
 8. immediately before the fMRI phase, run `bootstrap_models.sh --stage fmri` to
    materialise exact-revision, SHA-256-pinned BrainLM files under its
    CC-BY-NC-ND-4.0 restrictions;
-9. inspect with `status.sh` and the reported tmux/log paths.
+9. copy `configs/fmri-inputs.template.yaml` to reviewed checkpoint or canonical
+   metadata storage and pass the absolute copy as `--fmri-input-manifest` to each
+   fMRI check/dry-run/apply launch;
+10. inspect with `status.sh` and the reported tmux/log paths.
 
 No deployment, queue launch, or dataset download has started for this project.
 After bootstrap, launch phases in exactly this order:
@@ -59,6 +62,13 @@ and skips them; a failed or interrupted phase receives a new numbered attempt.
 Changed code/configuration under the same run ID is rejected, so use a new run ID
 instead of overwriting provenance. Acquisition receives the canonical
 `raw` directory directly; active derivatives are written under the fast work root.
+
+`bootstrap_runtime.sh` may leave a package copy in the dependency environment for
+its build-time smoke checks, but launches never trust that copy. `launch_queue.sh`
+sets `PYTHONPATH` exactly to `DEPLOYED_RELEASE/src:DEPLOYED_RELEASE`, verifies both
+imported module paths, and runs the queue and CLI with the selected Python via
+`-s -P -m`. The content-addressed deployed release therefore remains the source
+authority even when several releases share one dependency lock/environment.
 
 ### Private-repository archive transport
 
@@ -114,6 +124,17 @@ run last so the clinical and fMRI panels are genuinely late, integrated outputs.
 The model bootstrap exports `NEURAL_MANIFOLDS_MODEL_MANIFEST`, LaBraM source and
 checkpoint paths, BrainLM source, and—only after the fMRI bootstrap—the BrainLM
 checkpoint directory. The queue rehashes these files before model-dependent phases.
+
+The fMRI manifest is deliberately late-bound and is not part of the immutable base
+run contract. `audit` and all unrelated phases therefore require no fMRI manifest.
+For `fmri`, `--check-only` read-validates and hashes the strict YAML/JSON manifest,
+both referenced assets, the 0/1 timing origin, and the fMRI model cache without
+writing. `--apply` atomically binds the resolved record at
+`CHECKPOINT_ROOT/queue/RUN_ID/late-inputs/fmri.json`; any later mismatch requires a
+new run ID. The manifest itself belongs under `CHECKPOINT_ROOT/metadata` or
+`CANONICAL_ROOT/metadata`, never in the raw data tree or as raw data in Git. Static
+non-null `configs/server.yaml` `fmri_inputs` remain a legacy alternative, but they
+cannot be combined with `--fmri-input-manifest`.
 
 Remaining external blockers are concrete rather than scientific: the approved
 UKB_424 atlas and ordered coordinates; the explicit

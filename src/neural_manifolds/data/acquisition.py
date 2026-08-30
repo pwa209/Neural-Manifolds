@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -83,6 +84,81 @@ def _licenses_compatible(expected: str, observed: str) -> bool:
     if expected_value.startswith("cc0") and observed_value.startswith("cc0"):
         return True
     return expected_value in observed_value or observed_value in expected_value
+
+
+def _remove_write_permissions(root: Path) -> dict[str, Any]:
+    """Remove every write bit from a completely validated release tree.
+
+    This is deliberately called only after ``validate_release`` has rehashed the
+    completed staging tree.  Symlinks are skipped because their in-tree targets
+    are visited independently and symlink permission bits are not portable.
+    """
+
+    release = root.resolve(strict=True)
+    if not release.is_dir() or release.is_symlink():
+        raise ImmutableReleaseError(f"release is not a regular directory: {release}")
+    regular_files = 0
+    directories = 0
+    for current, _directory_names, file_names in os.walk(release, topdown=False, followlinks=False):
+        current_path = Path(current)
+        for file_name in file_names:
+            path = current_path / file_name
+            if path.is_symlink():
+                continue
+            metadata = path.stat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ImmutableReleaseError(
+                    f"special files are forbidden in immutable releases: {path}"
+                )
+            os.chmod(path, stat.S_IMODE(metadata.st_mode) & ~0o222)
+            if stat.S_IMODE(path.stat().st_mode) & 0o222:
+                raise ImmutableReleaseError(f"could not remove write permissions from {path}")
+            regular_files += 1
+        metadata = current_path.stat()
+        os.chmod(current_path, stat.S_IMODE(metadata.st_mode) & ~0o222)
+        if stat.S_IMODE(current_path.stat().st_mode) & 0o222:
+            raise ImmutableReleaseError(
+                f"could not remove directory write permissions from {current_path}"
+            )
+        directories += 1
+    return {
+        "policy": "all_write_bits_removed_after_complete_manifest_validation",
+        "regular_files": regular_files,
+        "directories": directories,
+        "read_only": True,
+    }
+
+
+def _validate_read_only_permissions(root: Path) -> dict[str, Any]:
+    release = root.resolve(strict=True)
+    writable: list[str] = []
+    regular_files = 0
+    directories = 0
+    for current, _directory_names, file_names in os.walk(release, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in file_names:
+            path = current_path / name
+            if path.is_symlink():
+                continue
+            mode = stat.S_IMODE(path.stat().st_mode)
+            if mode & 0o222:
+                writable.append(path.relative_to(release).as_posix())
+            if path.is_file():
+                regular_files += 1
+        if stat.S_IMODE(current_path.stat().st_mode) & 0o222:
+            relative = current_path.relative_to(release).as_posix() or "."
+            writable.append(relative)
+        directories += 1
+    if writable:
+        raise ImmutableReleaseError(
+            "published release has writable entries; examples=" + repr(writable[:10])
+        )
+    return {
+        "policy": "all_write_bits_removed_after_complete_manifest_validation",
+        "regular_files": regular_files,
+        "directories": directories,
+        "read_only": True,
+    }
 
 
 class AcquisitionManager:
@@ -164,12 +240,13 @@ class AcquisitionManager:
                     expected_dataset_id=dataset.id,
                     expected_release_version=dataset.source.version,
                 )
+                permissions = _remove_write_permissions(release)
                 return AcquisitionResult(
                     dataset_id=dataset.id,
                     release_version=dataset.source.version,
                     status="already_complete",
                     release_path=str(release),
-                    details=validation,
+                    details={**validation, "permissions": permissions},
                 )
             release.parent.mkdir(parents=True, exist_ok=True)
             staging.parent.mkdir(parents=True, exist_ok=True)
@@ -179,13 +256,14 @@ class AcquisitionManager:
                     expected_dataset_id=dataset.id,
                     expected_release_version=dataset.source.version,
                 )
+                permissions = _remove_write_permissions(staging)
                 os.replace(staging, release)
                 return AcquisitionResult(
                     dataset_id=dataset.id,
                     release_version=dataset.source.version,
                     status="published_recovered_stage",
                     release_path=str(release),
-                    details=validation,
+                    details={**validation, "permissions": permissions},
                 )
             started_at = datetime.now(UTC).isoformat()
             provider_metadata = self.provider(dataset).materialize(staging)
@@ -244,13 +322,18 @@ class AcquisitionManager:
                 expected_dataset_id=dataset.id,
                 expected_release_version=dataset.source.version,
             )
+            permissions = _remove_write_permissions(staging)
             os.replace(staging, release)
             return AcquisitionResult(
                 dataset_id=dataset.id,
                 release_version=dataset.source.version,
                 status="published",
                 release_path=str(release),
-                details={**validation, "content_validation": content_validation},
+                details={
+                    **validation,
+                    "content_validation": content_validation,
+                    "permissions": permissions,
+                },
             )
 
     @staticmethod
@@ -321,12 +404,13 @@ class AcquisitionManager:
             expected_dataset_id=dataset.id,
             expected_release_version=dataset.source.version,
         )
+        permissions = _validate_read_only_permissions(release)
         return AcquisitionResult(
             dataset_id=dataset.id,
             release_version=dataset.source.version,
             status="valid",
             release_path=str(release),
-            details=details,
+            details={**details, "permissions": permissions},
         )
 
 

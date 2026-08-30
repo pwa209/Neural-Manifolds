@@ -3,7 +3,10 @@ from typing import Any
 
 import pytest
 
-from neural_manifolds.data.acquisition import AcquisitionManager
+from neural_manifolds.data.acquisition import (
+    AcquisitionManager,
+    ImmutableReleaseError,
+)
 from neural_manifolds.data.models import DatasetRegistryModel
 from neural_manifolds.data.providers import AccessBlocked, Provider
 from neural_manifolds.data.registry import DatasetRegistry
@@ -17,6 +20,22 @@ class FakeProvider(Provider):
         staging.mkdir(parents=True, exist_ok=True)
         (staging / "raw.bin").write_bytes(b"raw")
         return {"metadata": {"license": "CC BY 4.0"}}
+
+
+class FailingProvider(FakeProvider):
+    def materialize(self, staging: Path) -> dict[str, Any]:
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / "partial.bin").write_bytes(b"restartable")
+        raise RuntimeError("simulated interrupted transfer")
+
+
+def _restore_owner_write(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | 0o200)
+    root.chmod(root.stat().st_mode | 0o200)
 
 
 def _registry(tmp_path: Path) -> DatasetRegistry:
@@ -64,7 +83,50 @@ def test_acquisition_publishes_then_only_validates_existing_release(tmp_path: Pa
     second = manager.acquire(registry.datasets[0], root)
     assert first.status == "published"
     assert second.status == "already_complete"
-    assert (root / "example_data" / "1" / ".complete.json").is_file()
+    release = root / "example_data" / "1"
+    assert (release / ".acquisition" / "COMPLETE.json").is_file()
+    assert first.details["permissions"]["read_only"] is True
+    assert second.details["permissions"]["read_only"] is True
+    assert all(
+        path.is_symlink() or path.stat().st_mode & 0o222 == 0
+        for path in (release, *release.rglob("*"))
+    )
+    _restore_owner_write(release)
+
+
+def test_permission_drift_is_rejected_by_validation_and_healed_by_acquire(
+    tmp_path: Path,
+) -> None:
+    registry = _registry(tmp_path)
+    manager = AcquisitionManager(
+        registry, provider_factory=lambda dataset, client: FakeProvider(dataset, client)
+    )
+    root = tmp_path / "nas"
+    manager.acquire(registry.datasets[0], root)
+    release = root / "example_data" / "1"
+    raw_file = release / "raw.bin"
+    raw_file.chmod(raw_file.stat().st_mode | 0o200)
+    with pytest.raises(ImmutableReleaseError, match="writable entries"):
+        manager.validate(registry.datasets[0], root)
+    recovered = manager.acquire(registry.datasets[0], root)
+    assert recovered.status == "already_complete"
+    assert raw_file.stat().st_mode & 0o222 == 0
+    _restore_owner_write(release)
+
+
+def test_interrupted_incomplete_staging_tree_remains_writable(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    manager = AcquisitionManager(
+        registry, provider_factory=lambda dataset, client: FailingProvider(dataset, client)
+    )
+    root = tmp_path / "nas"
+    with pytest.raises(RuntimeError, match="interrupted transfer"):
+        manager.acquire(registry.datasets[0], root)
+    staging = root / ".staging" / "example_data" / "1"
+    partial = staging / "partial.bin"
+    assert partial.is_file()
+    assert staging.stat().st_mode & 0o200
+    assert partial.stat().st_mode & 0o200
 
 
 def test_dry_run_has_no_filesystem_side_effect(tmp_path: Path) -> None:

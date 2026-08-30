@@ -1,0 +1,9 @@
+# Copy this template to reviewed university storage outside the deployed release,
+# for example CHECKPOINT_ROOT/metadata/fmri-inputs/<review-id>.yaml. Replace every
+# placeholder, review the atlas/coordinate pairing and timing convention, then pass
+# that absolute copy to launch_queue.sh --fmri-input-manifest. Do not commit raw or
+# participant-level data to Git.
+schema_version: 1
+ukb424_atlas_path: <ABSOLUTE_PATH_TO_APPROVED_UKB_424_ATLAS_NIFTI>
+ukb424_coordinates_path: <ABSOLUTE_PATH_TO_MATCHING_ORDERED_424_ROW_COORDINATES>
+ds006623_timing_index_origin: <REPLACE_WITH_INTEGER_0_OR_1>

@@ -7,11 +7,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/common.sh"
 
 usage() {
-  note "Usage: $0 --canonical-root PATH --work-root PATH --checkpoint-root PATH --repo-root PATH --python PATH --run-id ID [--from-phase NAME|--through-phase NAME|--only-phase NAME] (--check-only|--dry-run|--apply)"
+  note "Usage: $0 --canonical-root PATH --work-root PATH --checkpoint-root PATH --repo-root PATH --python PATH --run-id ID [--from-phase NAME|--through-phase NAME|--only-phase NAME] [--fmri-input-manifest ABSOLUTE_PATH] (--check-only|--dry-run|--apply)"
 }
 
 canonical_root=""; work_root=""; checkpoint_root=""; repo_root=""
 python_bin=""; run_id=""; mode=""; from_phase=""; through_phase=""; only_phase=""
+fmri_input_manifest=""
 while (($#)); do
   case "$1" in
     --canonical-root) canonical_root="${2:?missing value}"; shift 2 ;;
@@ -23,6 +24,7 @@ while (($#)); do
     --from-phase) from_phase="${2:?missing value}"; shift 2 ;;
     --through-phase) through_phase="${2:?missing value}"; shift 2 ;;
     --only-phase) only_phase="${2:?missing value}"; shift 2 ;;
+    --fmri-input-manifest) fmri_input_manifest="${2:?missing value}"; shift 2 ;;
     --check-only) mode="check"; shift ;;
     --dry-run) mode="dry"; shift ;;
     --apply) mode="apply"; shift ;;
@@ -35,12 +37,18 @@ done
 validate_roots "$canonical_root" "$work_root" "$checkpoint_root"
 validate_run_id "$run_id"
 validate_identity
+[[ "$repo_root" == /* && "$repo_root" != *".."* ]] || \
+  die "--repo-root must be an unambiguous absolute path"
+[[ "$python_bin" == /* && "$python_bin" != *".."* ]] || \
+  die "--python must be an unambiguous absolute path"
 [[ -x "$python_bin" ]] || die "Python executable is not executable: $python_bin"
-cli_bin="$(dirname -- "$python_bin")/neural-manifolds"
-[[ -x "$cli_bin" ]] || die "workflow CLI is not installed beside the selected Python: $cli_bin"
 [[ -f "$repo_root/SOURCE_MANIFEST.sha256" ]] || die "deployed source manifest is missing"
+[[ -f "$repo_root/src/neural_manifolds/cli.py" ]] || die "deployed source CLI is missing"
+[[ -f "$repo_root/workflow/queue.py" ]] || die "deployed workflow queue is missing"
 [[ -z "$only_phase" || ( -z "$from_phase" && -z "$through_phase" ) ]] || \
   die "--only-phase cannot be combined with a range"
+[[ -z "$fmri_input_manifest" || "$fmri_input_manifest" == /* ]] || \
+  die "--fmri-input-manifest must be an absolute path"
 cd -- "$repo_root"
 model_environment="$work_root/cache/models/model_paths.env"
 if [[ -f "$model_environment" ]]; then
@@ -48,19 +56,37 @@ if [[ -f "$model_environment" ]]; then
   # shellcheck disable=SC1090
   source "$model_environment"
 fi
+# The environment contains dependencies only. Always select code from this exact
+# content-addressed release, never a package left in the shared runtime environment.
+export PYTHONPATH="$repo_root/src:$repo_root"
+"$python_bin" -s -P -c '
+import pathlib
+import sys
+import neural_manifolds.cli
+import workflow.queue
+
+root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+expected = (root / "src/neural_manifolds/cli.py", root / "workflow/queue.py")
+actual = (
+    pathlib.Path(neural_manifolds.cli.__file__).resolve(strict=True),
+    pathlib.Path(workflow.queue.__file__).resolve(strict=True),
+)
+if actual != expected:
+    raise SystemExit(f"deployed source import mismatch: expected={expected}, actual={actual}")
+' "$repo_root"
 
 command=(
-  "$python_bin" -m workflow.queue
+  "$python_bin" -s -P -m workflow.queue
   --repo-root "$repo_root"
   --canonical-root "$canonical_root"
   --work-root "$work_root"
   --checkpoint-root "$checkpoint_root"
   --run-id "$run_id"
-  --cli "$cli_bin"
 )
 [[ -n "$from_phase" ]] && command+=(--from-phase "$from_phase")
 [[ -n "$through_phase" ]] && command+=(--through-phase "$through_phase")
 [[ -n "$only_phase" ]] && command+=(--only-phase "$only_phase")
+[[ -n "$fmri_input_manifest" ]] && command+=(--fmri-input-manifest "$fmri_input_manifest")
 
 if [[ "$mode" == "dry" ]]; then
   command+=(--dry-run)
