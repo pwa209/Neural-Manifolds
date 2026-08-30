@@ -7,11 +7,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/common.sh"
 
 usage() {
-  note "Usage: $0 --canonical-root PATH --work-root PATH --checkpoint-root PATH --repo-root PATH --python PATH --run-id ID [--json]"
+  note "Usage: $0 --canonical-root PATH --work-root PATH --checkpoint-root PATH --repo-root PATH --python PATH --run-id ID [--server-config ABSOLUTE_PATH] [--json]"
 }
 
 canonical_root=""; work_root=""; checkpoint_root=""; repo_root=""
-python_bin=""; run_id=""; json_flag=""
+python_bin=""; run_id=""; json_flag=""; server_config=""
 while (($#)); do
   case "$1" in
     --canonical-root) canonical_root="${2:?missing value}"; shift 2 ;;
@@ -20,6 +20,7 @@ while (($#)); do
     --repo-root) repo_root="${2:?missing value}"; shift 2 ;;
     --python) python_bin="${2:?missing value}"; shift 2 ;;
     --run-id) run_id="${2:?missing value}"; shift 2 ;;
+    --server-config) server_config="${2:?missing value}"; shift 2 ;;
     --json) json_flag="--json"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -27,12 +28,23 @@ while (($#)); do
 done
 [[ -n "$canonical_root" && -n "$work_root" && -n "$checkpoint_root" && -n "$repo_root" ]] || die "all roots are required"
 [[ -n "$python_bin" && -n "$run_id" ]] || { usage; exit 2; }
-validate_roots "$canonical_root" "$work_root" "$checkpoint_root"
 validate_run_id "$run_id"
+[[ "$repo_root" == /* && "$repo_root" != *".."* ]] || \
+  die "--repo-root must be an unambiguous absolute path"
+[[ "$python_bin" == /* && "$python_bin" != *".."* ]] || \
+  die "--python must be an unambiguous absolute path"
+if [[ -z "$server_config" ]]; then
+  server_config="$repo_root/configs/server.yaml"
+fi
+[[ "$server_config" == /* && "$server_config" != *".."* ]] || \
+  die "--server-config must be an unambiguous absolute path"
+load_server_config_contract "$server_config"
+validate_roots "$canonical_root" "$work_root" "$checkpoint_root"
 validate_identity
 [[ -d "$repo_root" ]] || die "deployed repository is missing: $repo_root"
 [[ -x "$python_bin" ]] || die "Python executable is not executable: $python_bin"
 cd -- "$repo_root"
+export PYTHONPATH="$repo_root/src:$repo_root"
 
 session="neural-manifolds-$run_id"
 if command -v tmux >/dev/null 2>&1 && tmux has-session -t "=$session" 2>/dev/null; then
@@ -41,12 +53,13 @@ else
   note "tmux=$session,running=false"
 fi
 command=(
-  "$python_bin" -m workflow.queue
+  "$python_bin" -s -P -m workflow.queue
   --repo-root "$repo_root"
   --canonical-root "$canonical_root"
   --work-root "$work_root"
   --checkpoint-root "$checkpoint_root"
   --run-id "$run_id"
+  --server-config "$server_config"
   --status
 )
 [[ -n "$json_flag" ]] && command+=("$json_flag")

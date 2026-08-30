@@ -17,37 +17,57 @@ analyses after results are seen.
 
 ## Current deployment boundary
 
-As of 30 August 2026, the compute endpoint has been verified as
-`wangpeng@kemove-Rack-Server` through local SSH port `1022`. It has an NVIDIA H100
-80-GB GPU, `tmux`, and `rsync`, but no detected Slurm installation. The three
-project-specific roots have been confirmed and recorded in `configs/server.yaml`:
+As of 30 August 2026, the university compute endpoint, accelerator/runtime
+compatibility, and required execution tooling have been validated. Exact hardware,
+scheduler/tool inventory, account, host, tunnel endpoint, and port details are
+retained only in the authenticated server environment. The tracked
+`configs/server.yaml` is a schema-valid, non-operational synthetic template. Resolved
+identity and root values for new sanitized-release runs live in an external
+server-only config selected by `--server-config`, validated against the explicit
+roots, and hash-bound to the run. Capability and auxiliary scheduler fields are
+provenance; preflight separately validates the actual runtime and tool inventory.
+The three project-specific roots are represented publicly by placeholders:
 
 | Role | Confirmed root | Purpose |
 |---|---|---|
-| Canonical | `/private_nas/wangpeng/neural-manifolds` | immutable raw releases, licences, acquisition manifests, snapshots |
-| Work | `/data1/wangpeng/neural-manifolds-work` | source releases, environments, caches, preprocessing, embeddings, metrics, models, figures |
-| Checkpoint | `/data2/wangpeng/neural-manifolds-checkpoints` | queue state, attempt receipts, restart markers, durable logs |
+| Canonical | `<CANONICAL_ROOT>` | immutable raw releases, licences, acquisition manifests, snapshots |
+| Work | `<WORK_ROOT>` | source releases, environments, caches, preprocessing, embeddings, metrics, models, figures |
+| Checkpoint | `<CHECKPOINT_ROOT>` | queue state, attempt receipts, restart markers, durable logs |
 
 Each root is one direct, project-specific child of its parent. Scripts reject the
 parent itself, nested guesses, relative paths, and a root copied from another
-project. Pass these exact configured values explicitly to every remote script.
+project. Keep the resolved config as a regular non-symlink YAML file under an
+approved server-only staging location, outside raw storage and the deployed source
+tree, for the initial preflight/bootstrap. Export its absolute path as
+`NEURAL_MANIFOLDS_SERVER_CONFIG`. After the roots exist, place an unchanged stable
+copy under non-raw project metadata storage, update the variable, pass that same path
+explicitly with `--server-config` to queue launch/status commands, and pass the exact
+configured roots explicitly to every remote script.
 
-The server is currently running the audit/acquisition-safe commit
-`9c3ccf71cf474bb1fb00b62318cb5be200f379be`. Because the private GitHub repository
-was not directly usable from the server, that exact pushed commit was deployed via
-an independently SHA-256-verified, unprefixed `git archive`; the embedded commit and
-the complete deployed-source inventory were reverified on the server. The pinned
-Python 3.11/CUDA 12.6 runtime passed an H100 tensor smoke test. Audit completed and
-direct-to-NAS acquisition is running under the durable run ID
-`acq-20260830-9c3ccf7`. Later scientific phases are intentionally not queued from
-that commit. The scientific-validity corrections described in `STATUS.md` have
-passed local verification and are being frozen into a new exact pushed commit and
-run ID for those phases; verified raw releases can then be revalidated and reused
-without copying raw data through GitHub or the workstation.
+This interface begins with the sanitized release and is not retroactive. Active
+queues remain bound to the immutable earlier release/configuration that created
+them and must be monitored from that release. Use a new run ID for the first queue
+launched from the sanitized release; do not migrate an active run in place.
+
+The active scientific source is an exact pushed public commit. The server's outbound
+repository probe timed out, so that same commit was deployed through the authorized,
+independently hash-verified, unprefixed `git archive` transport. Its embedded commit
+and deployed-source manifest were reverified on the server. The pinned Python
+3.11/CUDA 12.6 runtime was revalidated and reused. The scientific run completed its
+audit successfully; all later phases remain pending. Exact commit, archive hash,
+run, release, and log identifiers remain in server-only durable records.
+
+An earlier immutable acquisition-safe release continues only the already-running
+direct-to-NAS acquisition. Its process command remains pinned to that release even
+though `source/current` now selects the hardened scientific commit. No second
+acquisition is started concurrently. Once the original acquisition completes, the
+scientific run can revalidate and reuse verified raw releases without copying data
+through GitHub or the workstation. Exact acquisition identifiers remain server-only.
 
 ## Reproducible storage contract
 
-Given confirmed roots `CANONICAL`, `WORK`, and `CHECKPOINT`, the fixed layout is:
+Given resolved roots `<CANONICAL_ROOT>`, `<WORK_ROOT>`, and `<CHECKPOINT_ROOT>`, the
+fixed layout is:
 
 ```text
 CANONICAL/
@@ -78,7 +98,8 @@ Raw files never transit through the local workstation or fast work storage. A
 dataset downloader writes partial files beside the final NAS target, verifies the
 release inventory, then atomically publishes the final release directory. Raw
 release files become read-only after their complete manifest validates. Derived
-data stay on `/data1`; only small durable queue records and logs go to `/data2`.
+data stay under `<WORK_ROOT>`; only small durable queue records and logs go under
+`<CHECKPOINT_ROOT>`.
 GitHub contains only code, configuration, tests, checksum metadata, roadmap, and
 operational status. No empirical raw or derived data, participant-level outputs,
 aggregate analysis tables, figure source-data tables, model caches, durable logs,
@@ -154,7 +175,7 @@ Each adapter must support `--check-only`, `--dry-run`, bounded retries, partial-
 resume, immutable release names, and a final checksum inventory. Download into
 `CANONICAL/raw/.staging/<dataset>/<release>` and publish
 `CANONICAL/raw/<dataset>/<release>` only after validation. Never copy raw files to
-the Git repository, workstation, `/data1`, or `/data2`. Capture repository-native
+the Git repository, workstation, `<WORK_ROOT>`, or `<CHECKPOINT_ROOT>`. Capture repository-native
 metadata before any conversion. A failed transfer is resumed from its partial
 state; an existing verified release is skipped.
 
@@ -469,30 +490,34 @@ The following is a template; replace angle-bracket values only with user-confirm
 paths and an exact pushed Git commit. Never insert a password into these commands.
 
 ```bash
+export NEURAL_MANIFOLDS_SERVER_CONFIG=<SERVER_ONLY_CONFIG>
+
 bash scripts/remote/preflight.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT>
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT>
 
 bash scripts/remote/bootstrap.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> --check-only
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> --check-only
 # Review, then repeat with --apply.
 
 bash scripts/remote/deploy_from_git.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
   --repository https://github.com/pwa209/Neural-Manifolds.git \
   --commit <EXACT_PUSHED_COMMIT> --check-only
 # Review, then repeat with --apply.
 ```
 
-If the private repository cannot be reached from the server, create an unprefixed
-`git archive --format=tar` for that same verified commit on a trusted machine,
-record its SHA-256 independently, transfer it without embedding credentials, and
-use `scripts/remote/deploy_from_archive.sh` with `--archive`,
+The direct Git check accepts an exact commit only while an approved remote ref
+currently advertises that object ID. If it is not advertised, or the approved
+repository cannot be reached from the server, create an unprefixed
+`git archive --format=tar` for that same reviewed, pushed commit on a trusted
+machine, record its SHA-256 independently, transfer it without embedding
+credentials, and use `scripts/remote/deploy_from_archive.sh` with `--archive`,
 `--archive-sha256`, and the same exact repository/commit. Run `--check-only`, then
 `--dry-run`, then `--apply`. This is an explicit transport fallback, never an
 automatic downgrade or a substitute for the pushed Git commit.
@@ -502,13 +527,13 @@ has been independently recorded:
 
 ```bash
 bash scripts/remote/bootstrap_runtime.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
-  --repo-root <CONFIRMED_WORK_ROOT>/source/releases/<EXACT_PUSHED_COMMIT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
+  --repo-root <WORK_ROOT>/source/releases/<EXACT_PUSHED_COMMIT> \
   --python <ABSOLUTE_PYTHON_3_11> \
   --requirements-lock <ABSOLUTE_REQUIREMENTS_LOCK> \
-  --lock-sha256 e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e \
+  --lock-sha256 <REQUIREMENTS_LOCK_SHA256> \
   --check-only
 # Review, then repeat with --apply and retain the reported runtime Python path.
 ```
@@ -520,9 +545,9 @@ recorded with SHA-256 in `MODEL_MANIFEST.json`.
 
 ```bash
 bash scripts/remote/bootstrap_models.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
   --repo-root <DEPLOYED_RELEASE> --python <RUNTIME_PYTHON> \
   --stage core --check-only
 # Inspect --dry-run, then repeat with --apply.
@@ -546,12 +571,26 @@ gate.
 
 ```bash
 bash scripts/remote/launch_queue.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
   --repo-root <DEPLOYED_RELEASE> --python <RUNTIME_PYTHON> \
+  --server-config <SERVER_ONLY_CONFIG> \
   --run-id <RUN_ID> --only-phase audit --check-only
 # Inspect --dry-run, then repeat with --apply.
+```
+
+After the detached phase exits, read status from the same release and config:
+
+```bash
+bash scripts/remote/status.sh \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
+  --repo-root <DEPLOYED_RELEASE> \
+  --python <RUNTIME_PYTHON> \
+  --server-config <SERVER_ONLY_CONFIG> \
+  --run-id <RUN_ID> --json
 ```
 
 Repeat `--only-phase` in this order:
@@ -572,9 +611,10 @@ figures
 
 Immediately before `fmri`, repeat `bootstrap_models.sh` with `--stage fmri`. That
 stage re-verifies the exact Hugging Face commit and the already pinned per-file
-BrainLM SHA-256 values. BrainLM material is used only for this non-commercial
-secondary analysis under CC-BY-NC-ND-4.0; it is never redistributed or downloaded
-during earlier phases.
+BrainLM SHA-256 values. BrainLM checkpoint/weight files are used only for this
+non-commercial secondary analysis under CC-BY-NC-ND-4.0; they are never redistributed
+or downloaded during earlier phases. The pinned BrainLM source may already be
+present from the core source-cache bootstrap.
 
 The same immutable run ID may be established by `audit` while the external UKB_424
 atlas, ordered coordinates, and timing-index origin remain unresolved. Once these
@@ -587,10 +627,11 @@ data tree. Then use its absolute path for all three fMRI launch steps:
 
 ```bash
 bash scripts/remote/launch_queue.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
   --repo-root <DEPLOYED_RELEASE> --python <RUNTIME_PYTHON> \
+  --server-config <SERVER_ONLY_CONFIG> \
   --run-id <SAME_RUN_ID> --only-phase fmri \
   --fmri-input-manifest <ABSOLUTE_REVIEWED_MANIFEST> --check-only
 # Inspect --dry-run, then repeat with --apply using the identical manifest path.
@@ -604,8 +645,9 @@ the phase. A changed manifest, asset, or origin under that run ID is rejected an
 requires a new run ID. The base run contract remains limited to the deployed
 source, repository configuration, roots, and release; late fMRI inputs never force
 earlier phases to use a different run ID. The legacy non-null `fmri_inputs` mapping
-in `configs/server.yaml` remains supported when no external manifest is supplied,
-but mixing the two authorities is rejected.
+in the selected external server config remains supported when no external manifest
+is supplied, but mixing the two authorities is rejected. The tracked synthetic
+template keeps these fields null.
 
 To let the queue continue across several technically complete phases, replace
 `--only-phase` with `--from-phase <NAME> --through-phase <NAME>`. The same run ID
@@ -617,8 +659,8 @@ history.
 
 - `tmux` owns the queue process; an SSH tunnel loss does not stop it.
 - Every attempt has its own append-only log and receipt directory on checkpoint
-  storage. Immediately record the reported tmux session, pane PID, queue log, and
-  state root.
+  storage. Retain its operational identifiers and log/state locations only in the
+  server-side durable record.
 - The queue holds an advisory run lock and refuses duplicate live execution.
 - A killed process leaves a `running` marker with Linux boot/process-start identity.
   A restart will not duplicate it while that process is alive; an interrupted
@@ -637,8 +679,8 @@ history.
 GitHub is the source-of-truth for code, configuration, tests, checksum metadata,
 roadmap, and operational status only. Raw data, derived data, participant-level data,
 aggregate analysis tables, figure source-data tables, model caches, and durable logs
-remain on approved university storage. Deploy only an exact commit from
-`pwa209/Neural-Manifolds`; never deploy an ambiguous branch tip. The server creates
+remain on approved university storage. Deploy only an exact commit from the
+approved repository; never deploy an ambiguous branch tip. The server creates
 `SOURCE_PROVENANCE.json` and `SOURCE_MANIFEST.sha256` in a content-addressed release,
 and the queue includes that manifest hash in every phase identity.
 
@@ -651,18 +693,21 @@ the exploratory/non-preregistered project status.
 
 ## Remaining prerequisites and dataset-scoped blockers
 
-Server bootstrap, exact-source deployment, runtime construction, H100 validation,
-source audit, and the direct-to-NAS acquisition launch have completed. Their live
-identifiers and durable log paths are recorded in `STATUS.md`. The reviewed Python
-3.11/CUDA 12.6 lock and BrainLM revision/file hashes are pinned; they are not
-remaining prerequisites.
+Server bootstrap, hardened exact-source deployment, accelerator/runtime validation,
+the new scientific audit, and the earlier direct-to-NAS acquisition launch have
+completed.
+Their live identifiers and durable log paths are retained in server-only records.
+Repository tests, formatting, source/archive verification, and server
+check-only/dry-run/apply contracts all passed for the scientific commit.
 
-The remaining global prerequisite for queuing `qc` and all later scientific phases
-is a new exact GitHub commit containing the completed scientific-validity fixes,
-with repository-wide tests, formatting, source-inventory validation, archive
-rehashing, and server-side check-only/dry-run validation. Acquisition completion is
-also a technical input requirement for datasets used by those phases. Neither item
-is a scientific outcome gate.
+The next technical boundary is acquisition completion. Do not launch a concurrent
+second acquisition; after the active acquisition run finishes, run `acquire` under
+the scientific run so the hardened release revalidates and receipt-binds every
+usable raw release before `qc`. The pinned LaBraM/BrainLM source cache and LaBraM
+checkpoint must also be materialised before `encode`; their check-only contract
+currently reports `would_create`/`would_download`, and server outbound GitHub access
+timed out while acquisition was active. Acquisition/model availability are technical
+inputs, never scientific outcome gates.
 
 External dataset/phase blockers and limitations remain explicit:
 

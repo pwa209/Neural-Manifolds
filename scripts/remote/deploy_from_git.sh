@@ -52,9 +52,9 @@ fi
 
 require_bootstrapped_roots "$canonical_root" "$work_root" "$checkpoint_root"
 git ls-remote "$repository" | awk -v commit="$commit" '$1 == commit {found=1} END {exit !found}' || \
-  die "exact commit is not reachable from the approved repository"
+  die "exact commit is not currently advertised by an approved remote ref; use the verified archive transport"
 if [[ "$mode" == "check" ]]; then
-  note "check-only passed: identity, storage, GitHub reachability, exact commit"
+  note "check-only passed: identity, storage, repository reachability, advertised exact commit"
   note "release=$release"
   exit 0
 fi

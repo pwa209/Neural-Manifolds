@@ -20,6 +20,13 @@ build/
 .env.*
 !.env.example
 model_paths.env
+# Private resolved infrastructure configs. The tracked configs/server.yaml remains
+# a non-operational synthetic template.
+/configs/server.*.yaml
+/configs/server.*.yml
+/configs/server-*.yaml
+/configs/server-*.yml
+!/configs/server.yaml
 /data/
 /raw/
 /work/

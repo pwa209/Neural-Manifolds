@@ -3,32 +3,38 @@ project_id: conserved-manifold-regime
 project_status: exploratory_non_preregistered
 scientific_gates: false
 
+# PUBLIC SYNTHETIC TEMPLATE ONLY. These values intentionally identify no real host,
+# account, tunnel, accelerator, scheduler inventory, or university storage. Create a
+# private server-only variant outside version control, resolve every value there, and
+# select it with --server-config. The queue validates and hash-binds that selected
+# file to the run.
 identity:
-  expected_hostname: kemove-Rack-Server
-  expected_user: wangpeng
-  ssh_host: 127.0.0.1
-  ssh_port: 1022
+  expected_hostname: compute.neural-manifolds.invalid
+  expected_user: research.invalid
+  ssh_host: ssh.neural-manifolds.invalid
+  ssh_port: 22
 
-# User-confirmed project-specific roots. Bootstrap, deployment, and queue scripts
-# require the same values as explicit arguments and fail if configuration and
-# arguments differ; no project directory is inferred from another project.
+# Synthetic schema-valid roots. Each root is exactly one direct child of its distinct
+# synthetic parent. Replace all six values only in the external server-only config;
+# no project directory is inferred from another project.
 storage:
-  canonical_root: /private_nas/wangpeng/neural-manifolds
-  work_root: /data1/wangpeng/neural-manifolds-work
-  checkpoint_root: /data2/wangpeng/neural-manifolds-checkpoints
+  canonical_root: /srv/neural-manifolds.invalid/canonical/project
+  work_root: /srv/neural-manifolds.invalid/work/project
+  checkpoint_root: /srv/neural-manifolds.invalid/checkpoint/project
   raw_subdirectory: raw
   raw_data_location: canonical_only
   immutable_raw: true
   active_derivatives_location: work_only
   logs_and_markers_location: checkpoint_only
   allowed_parent_mounts:
-    canonical: /private_nas/wangpeng
-    work: /data1/wangpeng
-    checkpoint: /data2/wangpeng
+    canonical: /srv/neural-manifolds.invalid/canonical
+    work: /srv/neural-manifolds.invalid/work
+    checkpoint: /srv/neural-manifolds.invalid/checkpoint
 
 scheduler:
+  # Queue mode template only; validate the real scheduler/tool inventory separately.
   type: tmux
-  slurm_available: false
+  slurm_available: null
   session_prefix: neural-manifolds
   queue_module: workflow.queue
 
@@ -41,7 +47,7 @@ deployment:
 
 runtime:
   python: "3.11"
-  gpu: NVIDIA H100 80GB HBM3
+  gpu: validate_accelerator_and_runtime_before_launch
   deterministic_where_supported: true
   model_cache_subdirectory: cache/models
   model_environment_file: cache/models/model_paths.env

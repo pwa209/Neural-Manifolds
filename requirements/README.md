@@ -1,8 +1,9 @@
 # Server dependency lock
 
 `server-py311-cu126.lock` is the complete, transitive Python 3.11 lock for the
-Ubuntu 22.04 H100 runtime. It contains only pinned wheel-resolvable packages,
-cryptographic hashes, and explicit PyPI/PyTorch CUDA 12.6 indexes. The lock also
+Ubuntu 22.04 CUDA 12.6 accelerator runtime. It contains only pinned
+wheel-resolvable packages, cryptographic hashes, and explicit PyPI/PyTorch CUDA
+12.6 indexes. The lock also
 includes the test and build tooling used by the remote bootstrap's collection
 check and no-build-isolation project install.
 

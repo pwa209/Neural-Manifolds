@@ -3,44 +3,69 @@
 This is an exploratory, non-preregistered project with no scientific gates. All
 checks described here are technical integrity/provenance requirements.
 
-These scripts target the verified SSH compute endpoint
-`wangpeng@127.0.0.1:1022`, whose required remote identity is
-`wangpeng@kemove-Rack-Server`. They never accept or store a password. Run them
-inside an authenticated interactive SSH session (or through an SSH key/agent).
+These scripts target the verified university SSH compute endpoint. The real account,
+host, local tunnel address, and port are server-only operational details. The scripts
+never accept or store a password. Run them inside an authenticated interactive SSH
+session (or through an SSH key/agent).
 
 Every mutating command requires all three **user-confirmed, project-specific**
 roots. The scripts deliberately refuse the broad storage parents and do not infer
 a Neural Manifolds path from any other project:
 
-- canonical/raw NAS: `/private_nas/wangpeng/neural-manifolds`;
-- active work: `/data1/wangpeng/neural-manifolds-work`;
-- restart markers/logs: `/data2/wangpeng/neural-manifolds-checkpoints`.
+- canonical/raw NAS: `<CANONICAL_ROOT>`;
+- active work: `<WORK_ROOT>`;
+- restart markers/logs: `<CHECKPOINT_ROOT>`.
 
-These exact roots are confirmed and recorded in `configs/server.yaml`. The safe
-remote sequence is:
+The tracked `configs/server.yaml` is a schema-valid, non-operational synthetic
+template. Resolve the real identity and exact roots in an external server-only
+config. Capability and auxiliary scheduler fields are hash-bound provenance; the
+preflight separately validates the actual accelerator/runtime and tool inventory.
+
+For an initial bootstrap, provision the regular, non-symlink YAML with restrictive
+permissions in an approved server-only staging location outside the repository and
+raw storage. Select it with:
+
+```bash
+export NEURAL_MANIFOLDS_SERVER_CONFIG=<SERVER_ONLY_CONFIG>
+```
+
+Bootstrap and deployment scripts read this variable. After `bootstrap.sh --apply`,
+place an unchanged, stable copy under non-raw project metadata storage (for example,
+`<CHECKPOINT_ROOT>/metadata/server-configs/`) and update the variable to that path.
+Queue launch and status commands must also receive the same absolute path as
+`--server-config <SERVER_ONLY_CONFIG>`; the queue validates and hash-binds the path,
+SHA-256, and size to the run. The safe remote sequence is:
 
 1. `preflight.sh` (read-only);
 2. `bootstrap.sh --check-only`, then `bootstrap.sh --apply`;
 3. push reviewed source to GitHub and select an exact commit;
-4. `deploy_from_git.sh --check-only`, then `--apply`; if the private repository is
-   not reachable from the server, use the explicit hash-verified archive transport
-   described below instead—there is no automatic network-to-archive downgrade;
+4. `deploy_from_git.sh --check-only`, then `--apply`, for an exact commit currently
+   advertised by an approved remote ref; if it is not advertised or the repository
+   is unreachable from the server, use the explicit hash-verified archive transport
+   described below—there is no automatic network-to-archive downgrade;
 5. build a Python 3.11 environment with `bootstrap_runtime.sh` from the pinned
-   requirements lock (SHA-256
-   `e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e`);
+   requirements lock and pass its independently verified
+   `<REQUIREMENTS_LOCK_SHA256>`;
 6. run `bootstrap_models.sh --stage core` to clone both exact source revisions and
    download/hash-verify only LaBraM; its generated `model_paths.env` is sourced by
    the launcher;
-7. `launch_queue.sh --check-only`, inspect `--dry-run`, then use `--apply`;
+7. `launch_queue.sh --server-config <SERVER_ONLY_CONFIG> --check-only`, inspect
+   `--dry-run`, then use `--apply`;
 8. immediately before the fMRI phase, run `bootstrap_models.sh --stage fmri` to
    materialise exact-revision, SHA-256-pinned BrainLM files under its
    CC-BY-NC-ND-4.0 restrictions;
 9. copy `configs/fmri-inputs.template.yaml` to reviewed checkpoint or canonical
    metadata storage and pass the absolute copy as `--fmri-input-manifest` to each
    fMRI check/dry-run/apply launch;
-10. inspect with `status.sh` and the reported tmux/log paths.
+10. inspect with `status.sh --server-config <SERVER_ONLY_CONFIG>` and the reported
+    tmux/log paths.
 
-No deployment, queue launch, or dataset download has started for this project.
+Current public deployment state is recorded in `STATUS.md`; exact deployment, run,
+session, process, hash, and log identifiers remain in server-only durable records.
+This section defines the normative sequence for every new exact release.
+The external-config interface begins with this sanitized release and is not
+retroactive: monitor active older queues with the exact release/configuration that
+created them, and use a new run ID for the first sanitized-release launch.
 After bootstrap, launch phases in exactly this order:
 
 ```text
@@ -57,6 +82,19 @@ fmri
 figures
 ```
 
+Read a sanitized-release run without mutating it:
+
+```bash
+bash scripts/remote/status.sh \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
+  --repo-root <DEPLOYED_RELEASE> \
+  --python <RUNTIME_PYTHON> \
+  --server-config <SERVER_ONLY_CONFIG> \
+  --run-id <RUN_ID> --json
+```
+
 The queue is resumable. Re-running the same run ID validates successful artifacts
 and skips them; a failed or interrupted phase receives a new numbered attempt.
 Changed code/configuration under the same run ID is rejected, so use a new run ID
@@ -70,12 +108,13 @@ imported module paths, and runs the queue and CLI with the selected Python via
 `-s -P -m`. The content-addressed deployed release therefore remains the source
 authority even when several releases share one dependency lock/environment.
 
-### Private-repository archive transport
+### Explicit archive transport
 
 The archive path is a transport fallback for an already reviewed, pushed exact
-commit; it does not replace GitHub as the source of truth. On a trusted machine
-that can read the private repository, verify the checkout and create an
-unprefixed Git archive, then record its SHA-256 independently:
+commit; it does not replace GitHub as the source of truth. Use it when the server
+cannot reach the approved repository or when the chosen exact commit is no longer
+advertised directly by an approved remote ref. From a trusted checkout, create an
+unprefixed Git archive and record its SHA-256 independently:
 
 ```bash
 git rev-parse HEAD
@@ -88,10 +127,12 @@ transport. Do not put a password or token in the command, archive, or repository
 Inside the authenticated server session, run:
 
 ```bash
+export NEURAL_MANIFOLDS_SERVER_CONFIG=<SERVER_ONLY_CONFIG>
+
 bash scripts/remote/deploy_from_archive.sh \
-  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
-  --work-root <CONFIRMED_WORK_ROOT> \
-  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --canonical-root <CANONICAL_ROOT> \
+  --work-root <WORK_ROOT> \
+  --checkpoint-root <CHECKPOINT_ROOT> \
   --repository https://github.com/pwa209/Neural-Manifolds.git \
   --commit <EXACT_LOWERCASE_COMMIT> \
   --archive <SERVER_LOCAL_TAR> \
@@ -100,7 +141,7 @@ bash scripts/remote/deploy_from_archive.sh \
 ```
 
 The script verifies the archive hash and embedded Git commit, rejects unsafe
-members and links, re-verifies an exact private staging copy, publishes a complete
+members and links, re-verifies an exact staging copy, publishes a complete
 source manifest/provenance record, and changes `source/current` only after the
 content-addressed release validates.
 
@@ -130,11 +171,12 @@ run contract. `audit` and all unrelated phases therefore require no fMRI manifes
 For `fmri`, `--check-only` read-validates and hashes the strict YAML/JSON manifest,
 both referenced assets, the 0/1 timing origin, and the fMRI model cache without
 writing. `--apply` atomically binds the resolved record at
-`CHECKPOINT_ROOT/queue/RUN_ID/late-inputs/fmri.json`; any later mismatch requires a
-new run ID. The manifest itself belongs under `CHECKPOINT_ROOT/metadata` or
-`CANONICAL_ROOT/metadata`, never in the raw data tree or as raw data in Git. Static
-non-null `configs/server.yaml` `fmri_inputs` remain a legacy alternative, but they
-cannot be combined with `--fmri-input-manifest`.
+`<CHECKPOINT_ROOT>/queue/<RUN_ID>/late-inputs/fmri.json`; any later mismatch requires
+a new run ID. The manifest itself belongs under `<CHECKPOINT_ROOT>/metadata` or
+`<CANONICAL_ROOT>/metadata`, never in the raw data tree or as raw data in Git. Static
+non-null `fmri_inputs` in the selected external server config remain a legacy
+alternative, but they cannot be combined with `--fmri-input-manifest`. The tracked
+synthetic template keeps those fields null.
 
 Remaining external blockers are concrete rather than scientific: the approved
 UKB_424 atlas and ordered coordinates; the explicit

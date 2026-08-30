@@ -19,24 +19,26 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .phases import PHASE_BY_NAME, PHASES, PhaseSpec, select_phases
 from .state import (
-    EXPECTED_HOSTNAME,
-    EXPECTED_USER,
     ServerRoots,
     atomic_write_json,
     canonical_json,
     ensure_existing_roots,
     file_fingerprints,
+    is_relative_to,
     load_json,
     phase_hash,
+    sha256_bytes,
     sha256_file,
     sha256_json,
     validate_receipt,
+    validate_root_bases,
     validate_roots,
     validate_run_id,
     validate_success_marker,
@@ -49,6 +51,27 @@ APPROVED_REPOSITORIES = {
 EXACT_COMMIT_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 SOURCE_MANIFEST_LINE = re.compile(r"([0-9a-f]{64})  (.+)")
 MAX_SOURCE_MANIFEST_BYTES = 16 * 1024 * 1024
+MAX_SERVER_CONFIG_BYTES = 1024 * 1024
+HOSTNAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}")
+USER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9._-]{0,63}")
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedServerConfig:
+    """A resolved, content-bound server-only infrastructure contract."""
+
+    path: Path
+    document: dict[str, Any]
+    expected_hostname: str
+    expected_user: str
+    root_bases: dict[str, PurePosixPath]
+    roots: ServerRoots
+    sha256: str
+    size: int
+
+    @property
+    def fingerprint(self) -> dict[str, str | int]:
+        return {"path": str(self.path), "sha256": self.sha256, "size": self.size}
 
 
 def utc_now() -> str:
@@ -173,28 +196,144 @@ def verify_deployed_source(repo_root: Path, source_manifest: Path) -> dict[str, 
     }
 
 
-def verify_remote_identity() -> None:
+def verify_remote_identity(*, expected_hostname: str, expected_user: str) -> None:
     hostname = socket.gethostname()
     user = getpass.getuser()
-    if hostname != EXPECTED_HOSTNAME or user != EXPECTED_USER:
+    if hostname != expected_hostname or user != expected_user:
         raise RuntimeError(
             f"refusing server workflow on {user}@{hostname}; expected "
-            f"{EXPECTED_USER}@{EXPECTED_HOSTNAME}"
+            f"{expected_user}@{expected_hostname}"
         )
 
 
-def verify_server_config(path: Path, roots: ServerRoots) -> dict[str, Any]:
+def resolve_server_config_path(repo_root: Path, value: str) -> Path:
+    """Resolve the repository default or one explicit absolute external config."""
+
+    candidate = Path(value)
+    if candidate.is_absolute():
+        if ".." in candidate.parts:
+            raise ValueError("--server-config cannot contain '..'")
+        try:
+            status = candidate.lstat()
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"server configuration is missing: {candidate}") from exc
+        if stat.S_ISLNK(status.st_mode):
+            raise ValueError(f"server configuration cannot be a symbolic link: {candidate}")
+        return candidate.resolve(strict=True)
+    return safe_repo_file(repo_root, value, label="server config")
+
+
+def _read_server_config(path: Path) -> tuple[dict[str, Any], str, int]:
+    """Read one bounded, duplicate-key-free YAML infrastructure document."""
+
+    if not path.is_absolute():
+        raise ValueError("server configuration path must resolve to an absolute path")
+    try:
+        status = path.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"server configuration is missing: {path}") from exc
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
+        raise ValueError(f"server configuration must be a regular non-symlink file: {path}")
+    if status.st_size <= 0 or status.st_size > MAX_SERVER_CONFIG_BYTES:
+        raise ValueError(
+            f"server configuration has unsafe size {status.st_size}; "
+            f"expected 1-{MAX_SERVER_CONFIG_BYTES} bytes"
+        )
+    raw = path.read_bytes()
+    if b"\x00" in raw:
+        raise ValueError("server configuration must be NUL-free UTF-8 YAML")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("server configuration must be valid UTF-8") from exc
     try:
         import yaml
     except ModuleNotFoundError as exc:  # pragma: no cover - declared project dependency
-        raise RuntimeError("PyYAML is required to validate configs/server.yaml") from exc
-    with path.open("r", encoding="utf-8") as stream:
-        document = yaml.safe_load(stream)
+        raise RuntimeError("PyYAML is required to validate the server configuration") from exc
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def construct_unique_mapping(loader: Any, node: Any, deep: bool = False) -> dict[str, Any]:
+        loader.flatten_mapping(node)
+        result: dict[str, Any] = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if not isinstance(key, str):
+                raise ValueError("server configuration keys must be strings")
+            if key in result:
+                raise ValueError(f"duplicate key in server configuration: {key}")
+            result[key] = loader.construct_object(value_node, deep=deep)
+        return result
+
+    UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_unique_mapping
+    )
+    document = yaml.load(text, Loader=UniqueKeyLoader)
     if not isinstance(document, dict):
         raise ValueError("server configuration must be a mapping")
+    digest = sha256_bytes(raw)
+    if path.stat().st_size != len(raw) or sha256_file(path) != digest:
+        raise RuntimeError("server configuration changed while it was being validated")
+    return document, digest, len(raw)
+
+
+def _server_safety_contract(
+    document: dict[str, Any],
+) -> tuple[str, str, dict[str, PurePosixPath]]:
+    if document.get("schema_version") != 1:
+        raise ValueError("server configuration schema_version must equal 1")
+    identity = document.get("identity")
+    if not isinstance(identity, dict):
+        raise ValueError("server configuration has no identity mapping")
+    expected_hostname = identity.get("expected_hostname")
+    expected_user = identity.get("expected_user")
+    if not isinstance(expected_hostname, str) or not HOSTNAME_PATTERN.fullmatch(expected_hostname):
+        raise ValueError("identity.expected_hostname must be a resolved safe hostname")
+    if not isinstance(expected_user, str) or not USER_PATTERN.fullmatch(expected_user):
+        raise ValueError("identity.expected_user must be a resolved safe account name")
+
     storage = document.get("storage")
     if not isinstance(storage, dict):
         raise ValueError("server configuration has no storage mapping")
+    parent_values = storage.get("allowed_parent_mounts")
+    if not isinstance(parent_values, dict):
+        raise ValueError("server configuration has no storage.allowed_parent_mounts mapping")
+    root_bases = validate_root_bases(parent_values)
+    return expected_hostname, expected_user, root_bases
+
+
+def server_safety_values(path: Path) -> tuple[str, str, str, str, str]:
+    """Return shell-safe identity and parent values without executing a workflow."""
+
+    document, _digest, _size = _read_server_config(path.resolve(strict=True))
+    expected_hostname, expected_user, bases = _server_safety_contract(document)
+    return (
+        expected_hostname,
+        expected_user,
+        str(bases["canonical"]),
+        str(bases["work"]),
+        str(bases["checkpoint"]),
+    )
+
+
+def verify_server_config(
+    path: Path,
+    *,
+    repo_root: Path,
+    canonical_root: str,
+    work_root: str,
+    checkpoint_root: str,
+) -> VerifiedServerConfig:
+    document, digest, size = _read_server_config(path)
+    expected_hostname, expected_user, root_bases = _server_safety_contract(document)
+    roots = validate_roots(
+        canonical_root=canonical_root,
+        work_root=work_root,
+        checkpoint_root=checkpoint_root,
+        root_bases=root_bases,
+    )
+    storage = document["storage"]
     expected = {
         "canonical_root": roots.canonical,
         "work_root": roots.work,
@@ -204,7 +343,7 @@ def verify_server_config(path: Path, roots: ServerRoots) -> dict[str, Any]:
         configured = storage.get(key)
         if configured is None or configured == "":
             raise ValueError(
-                f"configs/server.yaml leaves storage.{key} unresolved; obtain and record "
+                f"server configuration leaves storage.{key} unresolved; obtain and record "
                 "the approved project root before deployment"
             )
         if not isinstance(configured, str):
@@ -212,7 +351,7 @@ def verify_server_config(path: Path, roots: ServerRoots) -> dict[str, Any]:
         configured_path = Path(configured)
         if configured_path != explicit_path:
             raise ValueError(
-                f"explicit {key} ({explicit_path}) does not match configs/server.yaml "
+                f"explicit {key} ({explicit_path}) does not match the server configuration "
                 f"({configured})"
             )
     if storage.get("raw_data_location") != "canonical_only":
@@ -237,7 +376,52 @@ def verify_server_config(path: Path, roots: ServerRoots) -> dict[str, Any]:
             not isinstance(origin, int) or isinstance(origin, bool) or origin not in {0, 1}
         ):
             raise ValueError("fmri_inputs.ds006623_timing_index_origin must be null, 0, or 1")
-    return document
+
+    resolved_repo = repo_root.resolve(strict=False)
+    repository_default = (resolved_repo / "configs" / "server.yaml").resolve(strict=False)
+    approved_roots = tuple(
+        path_value.resolve(strict=False)
+        for path_value in (roots.canonical, roots.work, roots.checkpoint)
+    )
+    inside_repository = is_relative_to(path, resolved_repo)
+    if inside_repository and path != repository_default:
+        raise ValueError(
+            "only the tracked configs/server.yaml synthetic template may be selected "
+            "from inside the deployed repository"
+        )
+    if not inside_repository and not any(is_relative_to(path, root) for root in approved_roots):
+        raise ValueError(
+            "external --server-config must reside inside an approved project storage root"
+        )
+    if is_relative_to(path, roots.raw.resolve(strict=False)):
+        raise ValueError("server configuration cannot be stored inside immutable raw data")
+    return VerifiedServerConfig(
+        path=path,
+        document=document,
+        expected_hostname=expected_hostname,
+        expected_user=expected_user,
+        root_bases=root_bases,
+        roots=roots,
+        sha256=digest,
+        size=size,
+    )
+
+
+def verify_server_config_unchanged(contract: VerifiedServerConfig) -> None:
+    try:
+        status = contract.path.lstat()
+    except FileNotFoundError:
+        status = None
+    if (
+        status is None
+        or stat.S_ISLNK(status.st_mode)
+        or not stat.S_ISREG(status.st_mode)
+        or status.st_size != contract.size
+        or sha256_file(contract.path) != contract.sha256
+    ):
+        raise RuntimeError(
+            "server configuration changed after validation; use a new run id and revalidate"
+        )
 
 
 def load_fmri_input_manifest(path: Path) -> tuple[Path, dict[str, Any]]:
@@ -735,6 +919,7 @@ def establish_run_contract(
     roots: ServerRoots,
     source_manifest_sha256: str,
     config_fingerprints: dict[str, Any],
+    server_config_fingerprint: dict[str, str | int],
 ) -> Path:
     """Create or validate the immutable source/config identity for a run id."""
 
@@ -749,6 +934,7 @@ def establish_run_contract(
         },
         "source_manifest_sha256": source_manifest_sha256,
         "config_fingerprints": config_fingerprints,
+        "server_config": server_config_fingerprint,
         "project_status": "exploratory_non_preregistered",
         "scientific_gates": False,
     }
@@ -767,6 +953,35 @@ def establish_run_contract(
         {**basis, "basis_sha256": basis_sha256, "created_at": utc_now()},
     )
     return contract_path
+
+
+def validate_status_server_config(
+    state_root: Path, server_config_fingerprint: dict[str, str | int]
+) -> None:
+    """Reject status reads made with a different external config for this run."""
+
+    contract_path = state_root / "run_contract.json"
+    if not contract_path.is_file():
+        return
+    payload = load_json(contract_path)
+    basis = {
+        key: value for key, value in payload.items() if key not in {"basis_sha256", "created_at"}
+    }
+    if payload.get("basis_sha256") != sha256_json(basis):
+        raise RuntimeError("run contract is invalid or changed")
+    expected = payload.get("server_config")
+    if expected is None:
+        fingerprints = payload.get("config_fingerprints")
+        if isinstance(fingerprints, dict):
+            path = str(server_config_fingerprint["path"])
+            legacy = fingerprints.get(path)
+            if isinstance(legacy, dict):
+                expected = {"path": path, **legacy}
+    if expected != server_config_fingerprint:
+        raise RuntimeError(
+            "run id is bound to a different server configuration path or hash; "
+            "supply the original --server-config"
+        )
 
 
 def status_rows(state_root: Path) -> list[dict[str, Any]]:
@@ -827,6 +1042,7 @@ def execute_phase(
     run_id: str,
     base_env: dict[str, str],
     events_path: Path,
+    post_command_validation: Callable[[], None] | None = None,
 ) -> None:
     phase_root = state_root / "phases" / phase.name
     success_path = phase_root / "success.json"
@@ -929,6 +1145,8 @@ def execute_phase(
             log_path=log_path,
             on_start=record_running,
         )
+        if post_command_validation is not None:
+            post_command_validation()
         if exit_code != 0:
             raise RuntimeError(f"phase command exited with status {exit_code}")
         if not receipt_path.is_file():
@@ -991,7 +1209,16 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--study", default="configs/study.yaml")
     value.add_argument("--datasets", default="configs/datasets.yaml")
     value.add_argument("--models", default="configs/models.yaml")
-    value.add_argument("--server", default="configs/server.yaml")
+    value.add_argument(
+        "--server-config",
+        "--server",
+        dest="server_config",
+        default="configs/server.yaml",
+        help=(
+            "repository-relative server config or an absolute server-only config path; "
+            "--server is retained as a compatibility alias"
+        ),
+    )
     value.add_argument(
         "--fmri-input-manifest",
         help=(
@@ -1021,11 +1248,6 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    roots = validate_roots(
-        canonical_root=args.canonical_root,
-        work_root=args.work_root,
-        checkpoint_root=args.checkpoint_root,
-    )
     run_id = validate_run_id(args.run_id)
     requested_repo_root = Path(args.repo_root)
     if not requested_repo_root.is_absolute():
@@ -1036,7 +1258,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     study = safe_repo_file(repo_root, args.study, label="study config")
     datasets = safe_repo_file(repo_root, args.datasets, label="dataset config")
     models = safe_repo_file(repo_root, args.models, label="model config")
-    server = safe_repo_file(repo_root, args.server, label="server config")
+    server = resolve_server_config_path(repo_root, args.server_config)
+    server_contract = verify_server_config(
+        server,
+        repo_root=repo_root,
+        canonical_root=args.canonical_root,
+        work_root=args.work_root,
+        checkpoint_root=args.checkpoint_root,
+    )
+    roots = server_contract.roots
     source_manifest = safe_repo_file(repo_root, args.source_manifest, label="source manifest")
     source_root = repo_root / "src"
     source_cli = source_root / "neural_manifolds" / "cli.py"
@@ -1064,7 +1294,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     state_root = roots.state_root(run_id)
 
     if args.status:
-        ensure_existing_roots(roots, require_writable=False)
+        verify_remote_identity(
+            expected_hostname=server_contract.expected_hostname,
+            expected_user=server_contract.expected_user,
+        )
+        ensure_existing_roots(roots, root_bases=server_contract.root_bases, require_writable=False)
+        validate_status_server_config(state_root, server_contract.fingerprint)
         print_status(state_root, as_json=args.json)
         return 0
 
@@ -1085,7 +1320,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
 
     if args.dry_run:
-        verify_server_config(server, roots)
         plan = {
             "mode": "dry-run",
             "run_id": run_id,
@@ -1096,6 +1330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "checkpoint": str(roots.checkpoint),
             },
             "state_root": str(state_root),
+            "server_config": server_contract.fingerprint,
             "fmri_input_manifest": (
                 str(fmri_input_manifest) if fmri_input_manifest is not None else None
             ),
@@ -1115,8 +1350,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(plan, indent=2))
         return 0
 
-    verify_remote_identity()
-    ensure_existing_roots(roots, require_writable=not args.check_only)
+    verify_remote_identity(
+        expected_hostname=server_contract.expected_hostname,
+        expected_user=server_contract.expected_user,
+    )
+    ensure_existing_roots(
+        roots,
+        root_bases=server_contract.root_bases,
+        require_writable=not args.check_only,
+    )
     if not repo_root.is_dir():
         raise FileNotFoundError(f"deployed repository does not exist: {repo_root}")
     if not source_manifest.is_file():
@@ -1124,7 +1366,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"deployment source manifest is required before execution: {source_manifest}"
         )
     source_verification = verify_deployed_source(repo_root, source_manifest)
-    server_config = verify_server_config(server, roots)
+    server_config = server_contract.document
+    verify_server_config_unchanged(server_contract)
     validation = build_validate_command(
         cli_prefix=cli_prefix, study=study, datasets=datasets, server=server
     )
@@ -1133,6 +1376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     validation_result = subprocess.run(validation, cwd=repo_root, env=validation_env, check=False)
     if validation_result.returncode != 0:
         raise RuntimeError("configuration validation failed")
+    verify_server_config_unchanged(server_contract)
     if args.check_only:
         for phase in selected:
             verified_fmri_input_fingerprints(
@@ -1146,7 +1390,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    config_fingerprints = file_fingerprints(config_paths)
+    config_fingerprints = file_fingerprints((study, datasets, models))
+    config_fingerprints[str(server_contract.path)] = {
+        "sha256": server_contract.sha256,
+        "size": server_contract.size,
+    }
     source_manifest_sha256 = sha256_file(source_manifest)
     base_env = dict(validation_env)
     base_env.update(
@@ -1160,6 +1408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "NEURAL_MANIFOLDS_RUN_ROOT": str(roots.run_root(run_id)),
             "NEURAL_MANIFOLDS_STATE_ROOT": str(state_root),
             "NEURAL_MANIFOLDS_SOURCE_MANIFEST": str(source_manifest),
+            "NEURAL_MANIFOLDS_SERVER_CONFIG": str(server_contract.path),
         }
     )
     state_root.mkdir(parents=True, exist_ok=True)
@@ -1175,8 +1424,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             roots=roots,
             source_manifest_sha256=source_manifest_sha256,
             config_fingerprints=config_fingerprints,
+            server_config_fingerprint=server_contract.fingerprint,
         )
         for phase, command in zip(selected, commands, strict=True):
+            verify_server_config_unchanged(server_contract)
             fmri_input_fingerprints, fmri_environment = verified_fmri_input_fingerprints(
                 phase, server_config, fmri_input_manifest=fmri_input_manifest
             )
@@ -1222,6 +1473,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_id=run_id,
                 base_env=phase_environment,
                 events_path=events_path,
+                post_command_validation=lambda: verify_server_config_unchanged(server_contract),
             )
     print_status(state_root, as_json=False)
     return 0

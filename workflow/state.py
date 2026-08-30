@@ -12,14 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-EXPECTED_HOSTNAME = "kemove-Rack-Server"
-EXPECTED_USER = "wangpeng"
-
-ROOT_BASES: Mapping[str, PurePosixPath] = {
-    "canonical": PurePosixPath("/private_nas/wangpeng"),
-    "work": PurePosixPath("/data1/wangpeng"),
-    "checkpoint": PurePosixPath("/data2/wangpeng"),
-}
+ROOT_KINDS = ("canonical", "work", "checkpoint")
 
 RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,79}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -99,12 +92,46 @@ def validate_run_id(run_id: str) -> str:
     return run_id
 
 
-def _validate_project_root(kind: str, value: str | os.PathLike[str]) -> Path:
-    if kind not in ROOT_BASES:
+def validate_root_bases(
+    values: Mapping[str, str | os.PathLike[str]],
+) -> dict[str, PurePosixPath]:
+    """Validate the server-only parent mounts used to constrain project roots."""
+
+    missing = set(ROOT_KINDS).difference(values)
+    unknown = set(values).difference(ROOT_KINDS)
+    if missing or unknown:
+        raise ValueError(
+            "allowed parent mounts must define exactly canonical, work, and checkpoint; "
+            f"missing={sorted(missing)}, unknown={sorted(unknown)}"
+        )
+    bases: dict[str, PurePosixPath] = {}
+    for kind in ROOT_KINDS:
+        raw = str(values[kind])
+        pure = PurePosixPath(raw)
+        if not pure.is_absolute():
+            raise ValueError(f"{kind} parent mount must be an absolute POSIX path")
+        if ".." in pure.parts:
+            raise ValueError(f"{kind} parent mount cannot contain '..'")
+        if pure == PurePosixPath("/"):
+            raise ValueError(f"refusing broad {kind} parent mount: {pure}")
+        bases[kind] = pure
+    if len({str(path) for path in bases.values()}) != len(ROOT_KINDS):
+        raise ValueError("canonical, work, and checkpoint parent mounts must be distinct")
+    return bases
+
+
+def _validate_project_root(
+    kind: str,
+    value: str | os.PathLike[str],
+    *,
+    root_bases: Mapping[str, str | os.PathLike[str]],
+) -> Path:
+    if kind not in root_bases:
         raise ValueError(f"unknown root kind: {kind}")
     raw = str(value)
     pure = PurePosixPath(raw)
-    base = ROOT_BASES[kind]
+    raw_base = root_bases[kind]
+    base = raw_base if isinstance(raw_base, PurePosixPath) else PurePosixPath(str(raw_base))
     if not pure.is_absolute():
         raise ValueError(f"{kind} root must be an absolute POSIX path")
     if ".." in pure.parts:
@@ -121,22 +148,35 @@ def _validate_project_root(kind: str, value: str | os.PathLike[str]) -> Path:
     return Path(str(pure))
 
 
-def validate_roots(*, canonical_root: str, work_root: str, checkpoint_root: str) -> ServerRoots:
+def validate_roots(
+    *,
+    canonical_root: str,
+    work_root: str,
+    checkpoint_root: str,
+    root_bases: Mapping[str, str | os.PathLike[str]],
+) -> ServerRoots:
     """Validate explicit roots without deriving one root from another."""
 
+    bases = validate_root_bases(root_bases)
     roots = ServerRoots(
-        canonical=_validate_project_root("canonical", canonical_root),
-        work=_validate_project_root("work", work_root),
-        checkpoint=_validate_project_root("checkpoint", checkpoint_root),
+        canonical=_validate_project_root("canonical", canonical_root, root_bases=bases),
+        work=_validate_project_root("work", work_root, root_bases=bases),
+        checkpoint=_validate_project_root("checkpoint", checkpoint_root, root_bases=bases),
     )
     if len({str(roots.canonical), str(roots.work), str(roots.checkpoint)}) != 3:
         raise ValueError("canonical, work, and checkpoint roots must be distinct")
     return roots
 
 
-def ensure_existing_roots(roots: ServerRoots, *, require_writable: bool) -> None:
+def ensure_existing_roots(
+    roots: ServerRoots,
+    *,
+    root_bases: Mapping[str, str | os.PathLike[str]],
+    require_writable: bool,
+) -> None:
     """Check roots after bootstrap; never create them here."""
 
+    bases = validate_root_bases(root_bases)
     for kind, path in (
         ("canonical", roots.canonical),
         ("work", roots.work),
@@ -145,7 +185,7 @@ def ensure_existing_roots(roots: ServerRoots, *, require_writable: bool) -> None
         if not path.is_dir():
             raise FileNotFoundError(f"{kind} root does not exist or is not a directory: {path}")
         resolved = path.resolve(strict=True)
-        resolved_base = Path(str(ROOT_BASES[kind])).resolve(strict=True)
+        resolved_base = Path(str(bases[kind])).resolve(strict=True)
         try:
             resolved.relative_to(resolved_base)
         except ValueError as exc:

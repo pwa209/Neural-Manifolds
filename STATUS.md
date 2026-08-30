@@ -12,33 +12,42 @@ source-data tables, caches, and durable logs remain on university storage.
 - Scientific gates: none. Technical validation and provenance checks remain active.
 - Local implementation: the complete phase graph and the scientific-validity
   hardening described below are present. Later phases are not yet running and will
-  be launched one at a time from a new exact server deployment after their technical
-  inputs are present; no result threshold controls that sequence.
-- Local verification: 271 repository tests passed, with four documented
-  platform-capability skips; Ruff lint, Ruff format, and `git diff --check` are clean.
-- GitHub synchronization: the local branch is `main` and tracks `origin/main`.
-  Deployment uses an exact pushed commit, never an unrecorded working tree or branch
-  tip.
-- Server roots: confirmed as `/private_nas/wangpeng/neural-manifolds`,
-  `/data1/wangpeng/neural-manifolds-work`, and
-  `/data2/wangpeng/neural-manifolds-checkpoints`.
-- Server deployment: exact pushed commit
-  `9c3ccf71cf474bb1fb00b62318cb5be200f379be` was deployed through the verified
-  local-archive fallback at
-  `/data1/wangpeng/neural-manifolds-work/source/releases/9c3ccf71cf474bb1fb00b62318cb5be200f379be`.
-  The archive SHA-256 and full source manifest were independently verified before
-  release activation.
-- Server runtime: the lock-addressed Python 3.11 environment at
-  `/data1/wangpeng/neural-manifolds-work/envs/e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e`
-  completed with exit code 0. PyTorch `2.13.0+cu126` passed an H100 CUDA matrix
-  smoke test. Bootstrap log:
-  `/data2/wangpeng/neural-manifolds-checkpoints/logs/bootstrap-runtime-8e382c05491eb0145d9390f15142952c13ee72ad.log`.
-- Acquisition queue: running under `acq-20260830-9c3ccf7`. Audit attempt 1
-  succeeded with four independently rehashed artifacts. Last verified on 30 August
-  2026 at 16:34 UTC, direct NAS acquisition attempt 1 remained active in tmux session
-  `neural-manifolds-acq-20260830-9c3ccf7` (pane PID `2525228`; phase PID `2525453`).
-  Queue state and log:
-  `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7`.
+  be launched one at a time from the exact deployment after their technical inputs
+  are present; no result threshold controls that sequence.
+- Local verification: 274 repository tests passed, with five documented local
+  capability/dependency skips; Ruff lint, Ruff format, and `git diff --check` are
+  clean.
+- Git source: this tracked change set combines the scientifically hardened pipeline
+  with the sanitized operations contract. Active server queues remain pinned to the
+  earlier exact releases that created them; this change set does not replace or
+  modify those releases.
+- Server roots: the canonical NAS, work, and checkpoint roots are confirmed. Public
+  documentation denotes them as `<CANONICAL_ROOT>`, `<WORK_ROOT>`, and
+  `<CHECKPOINT_ROOT>`. For new runs from the sanitized release, resolved values live
+  in an external server-only config selected by `--server-config`, validated against
+  explicit roots, and hash-bound to the run.
+- Server deployment: the exact pushed scientific commit is active as a
+  content-addressed release. Because direct repository access was unavailable, the
+  authorized archive transport was used; the archive checksum, embedded commit, and
+  deployed manifest were independently reverified before activation. Operational
+  hashes and release paths remain in server-only durable records.
+- Server runtime: the lock-addressed Python 3.11/CUDA 12.6 environment was
+  revalidated and reused for the scientific release. Accelerator/runtime
+  compatibility validation passed. The exact hardware inventory, runtime path, lock
+  checksum, scheduler/tool inventory, and bootstrap log are retained in server-only
+  durable records.
+- Acquisition queue: direct-to-NAS acquisition is active and remains pinned to its
+  immutable acquisition-safe release. The audit completed successfully, and the
+  queue has finalized release content while continuing the current transfer. The
+  run, session, process, queue, and log identifiers remain in server-only durable
+  records.
+- Scientific queue: the scientifically hardened exact release completed its audit
+  successfully, including independent rehashing of receipt-bound artifacts. The
+  audit session exited normally, and all later phases remain pending. Exact run and
+  log identifiers remain in server-only durable records.
+- Migration boundary: the external-config interface is not retroactive. Existing
+  queues must be monitored with the immutable release/configuration that created
+  them. The first queue launched from the sanitized release requires a new run ID.
 - External-data results: none.
 
 ## Integrated execution contract
@@ -69,8 +78,8 @@ audit -> acquire -> qc -> preprocess -> encode -> metrics -> models -> tms
 - Final figures run last and require healthy/model, TMS, late clinical, and fMRI
   source bundles.
 
-The server dependency lock SHA-256 is
-`e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e`.
+The server dependency lock is checksum-pinned; its verified digest is retained in
+the server-only deployment provenance.
 
 ## Unresolved execution inputs
 
@@ -83,6 +92,11 @@ The server dependency lock SHA-256 is
   filename diagnosis but no CRS-R/demographic covariates.
 - Successful validation of the `ds006623` git-annex content path; its special remote
   may remain unavailable even when the public Git metadata clone succeeds.
+- Core model materialisation remains pending: the pinned LaBraM and BrainLM source
+  checkouts and LaBraM checkpoint are not yet cached. The check-only contract passed,
+  but outbound GitHub access timed out while acquisition was active. Retry after
+  acquisition or use a separately hash-verified transport before `encode`; do not
+  substitute an unpinned model.
 
 ## Scientific implementation hardening
 
@@ -107,13 +121,11 @@ protections, not registration, preregistration, or scientific outcome gates.
 
 ## Durable run records
 
-Each server run writes a machine-readable record under the configured restart root.
-This file should be updated only with high-level state, source commit, run ID, tmux
-session/job identifier, and log location. Never paste raw data, secrets, or subject
-identifiers here.
+Each server run writes a machine-readable record under `<CHECKPOINT_ROOT>`. Exact
+source commits, run IDs, session/job and process identifiers, operational hashes,
+attempt numbers, timestamps, and log paths are server-only durable records and must
+not be copied into public status files.
 
-- Acquisition/provenance run: `acq-20260830-9c3ccf7`
-- Source commit: `9c3ccf71cf474bb1fb00b62318cb5be200f379be`
-- tmux session: `neural-manifolds-acq-20260830-9c3ccf7`
-- Queue log: `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7/tmux.log`
-- Phase log: `/data2/wangpeng/neural-manifolds-checkpoints/queue/acq-20260830-9c3ccf7/logs/acquire.attempt-0001.log`
+The public durable state is: the scientific commit is deployed, the scientific
+audit passed, direct-to-NAS acquisition is active, no external-data results exist,
+and all later scientific phases remain pending.

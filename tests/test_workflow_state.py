@@ -11,40 +11,56 @@ from workflow.state import (
     phase_hash,
     sha256_file,
     validate_receipt,
+    validate_root_bases,
     validate_roots,
     validate_run_id,
     validate_success_marker,
 )
 
+ROOT_BASES = {
+    "canonical": "/srv/canonical/researcher",
+    "work": "/srv/work/researcher",
+    "checkpoint": "/srv/checkpoint/researcher",
+}
+
 
 def test_explicit_project_roots_are_required() -> None:
     roots = validate_roots(
-        canonical_root="/private_nas/wangpeng/neural-manifolds",
-        work_root="/data1/wangpeng/neural-manifolds-work",
-        checkpoint_root="/data2/wangpeng/neural-manifolds-checkpoint",
+        canonical_root="/srv/canonical/researcher/example-study",
+        work_root="/srv/work/researcher/example-study-work",
+        checkpoint_root="/srv/checkpoint/researcher/example-study-state",
+        root_bases=ROOT_BASES,
     )
-    assert roots.raw.as_posix() == "/private_nas/wangpeng/neural-manifolds/raw"
+    assert roots.raw.as_posix() == "/srv/canonical/researcher/example-study/raw"
 
     bad_values = (
         {
-            "canonical_root": "/private_nas/wangpeng",
-            "work_root": "/data1/wangpeng/neural-manifolds-work",
-            "checkpoint_root": "/data2/wangpeng/neural-manifolds-checkpoint",
+            "canonical_root": "/srv/canonical/researcher",
+            "work_root": "/srv/work/researcher/example-study-work",
+            "checkpoint_root": "/srv/checkpoint/researcher/example-study-state",
         },
         {
-            "canonical_root": "/private_nas/wangpeng/guessed/nested",
-            "work_root": "/data1/wangpeng/neural-manifolds-work",
-            "checkpoint_root": "/data2/wangpeng/neural-manifolds-checkpoint",
+            "canonical_root": "/srv/canonical/researcher/guessed/nested",
+            "work_root": "/srv/work/researcher/example-study-work",
+            "checkpoint_root": "/srv/checkpoint/researcher/example-study-state",
         },
         {
             "canonical_root": "relative/path",
-            "work_root": "/data1/wangpeng/neural-manifolds-work",
-            "checkpoint_root": "/data2/wangpeng/neural-manifolds-checkpoint",
+            "work_root": "/srv/work/researcher/example-study-work",
+            "checkpoint_root": "/srv/checkpoint/researcher/example-study-state",
         },
     )
     for values in bad_values:
         with pytest.raises(ValueError):
-            validate_roots(**values)
+            validate_roots(**values, root_bases=ROOT_BASES)
+
+
+def test_root_parent_contract_is_explicit_exact_and_not_broad() -> None:
+    assert validate_root_bases(ROOT_BASES)["work"].as_posix() == ROOT_BASES["work"]
+    with pytest.raises(ValueError, match="define exactly"):
+        validate_root_bases({"canonical": "/srv/canonical"})
+    with pytest.raises(ValueError, match="broad"):
+        validate_root_bases({**ROOT_BASES, "canonical": "/"})
 
 
 def test_run_id_rejects_shell_metacharacters() -> None:

@@ -74,18 +74,27 @@ pytest
 
 Server deployment, storage layout, acquisition, and phase mapping are documented in
 `docs/IMPLEMENTATION_ROADMAP.md`. Run `scripts/remote/preflight.sh` before any remote
-mutation and keep the explicit roots in `configs/server.yaml` aligned with the paths
-approved for this project.
+mutation. The tracked `configs/server.yaml` is a non-operational synthetic template;
+resolved infrastructure values live in an external server-only config. Export its
+absolute path as `NEURAL_MANIFOLDS_SERVER_CONFIG` for bootstrap/deployment scripts,
+and pass the same path with `--server-config` to queue launch/status commands. The
+queue hash-binds that file to the run.
+
+This external-config contract starts with the sanitized release that introduces it;
+it is not retroactive. Keep every already-active queue on the exact earlier
+release/configuration that created it. Use a new run ID for the first launch from the
+sanitized release.
 
 The pinned Python 3.11/CUDA 12.6 server lock is
-`requirements/server-py311-cu126.lock`, SHA-256
-`e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e`.
+`requirements/server-py311-cu126.lock`. Its verified checksum is retained in the
+server-only deployment provenance.
 
 ## Status
 
-The exact server roots, pinned runtime, and acquisition-safe source deployment are
-confirmed. Direct-to-NAS acquisition is running; no external dataset has been
-analysed. The scientifically hardened execution tree has passed local verification
-and is being frozen for exact server deployment before later phases are queued.
-Dataset- and fMRI-specific prerequisites remain explicit; see `STATUS.md` for the
-current boundary.
+The server roots, pinned runtime, accelerator compatibility, and acquisition-safe
+source deployment are confirmed, with exact infrastructure details retained only in
+server-side durable records. Direct-to-NAS acquisition is running; no external
+dataset has been analysed. The scientifically hardened commit has passed local
+verification, is deployed as an exact content-addressed server release, and completed
+its audit phase. Acquisition, model-cache, dataset-, and fMRI-specific prerequisites
+remain explicit; see `STATUS.md` for the current phase boundary.

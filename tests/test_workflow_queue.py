@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import shutil
+import subprocess
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 import workflow.queue as queue_module
 from workflow.phases import PHASES
 from workflow.queue import (
+    VerifiedServerConfig,
     bind_fmri_late_inputs,
     build_phase_command,
     establish_run_contract,
     load_fmri_input_manifest,
     prepare_clinical_lock,
+    resolve_server_config_path,
     safe_repo_file,
+    validate_status_server_config,
     verified_fmri_input_fingerprints,
     verified_model_fingerprints,
     verify_deployed_source,
     verify_server_config,
+    verify_server_config_unchanged,
 )
 from workflow.state import ServerRoots, atomic_write_json, sha256_file
 
@@ -46,11 +52,14 @@ def test_phase_command_uses_dispatcher_contract(tmp_path: Path) -> None:
         "--phase",
         "clinical",
     ]
+    assert command[command.index("--server") + 1] == str(tmp_path / "configs/server.yaml")
     assert command[-2:] == ["--run-id", "main-001"]
 
 
 def test_remote_launcher_pins_imports_to_selected_release() -> None:
     launcher = Path("scripts/remote/launch_queue.sh").read_text(encoding="utf-8")
+    status = Path("scripts/remote/status.sh").read_text(encoding="utf-8")
+    common = Path("scripts/remote/common.sh").read_text(encoding="utf-8")
     assert 'export PYTHONPATH="$repo_root/src:$repo_root"' in launcher
     assert 'runtime_environment=(env "PYTHONPATH=$PYTHONPATH")' in launcher
     assert '"${runtime_environment[@]}"' in launcher
@@ -60,6 +69,54 @@ def test_remote_launcher_pins_imports_to_selected_release() -> None:
     assert "tmux new-session -d -P -F '#{pane_pid}'" in launcher
     assert '[[ "$pane_pid" =~ ^[0-9]+$ ]]' in launcher
     assert "cli_bin=" not in launcher
+    assert '--server-config "$server_config"' in launcher
+    assert 'server_config="$repo_root/configs/server.yaml"' in launcher
+    assert '--server-config "$server_config"' in status
+    assert 'server_config="$repo_root/configs/server.yaml"' in status
+    assert 'EXPECTED_HOSTNAME=""' in common
+    assert 'CANONICAL_PARENT=""' in common
+    assert 'CONFIGURED_CANONICAL_ROOT=""' in common
+    assert "canonical root does not match the selected server config" in common
+    assert "load_server_config_contract" in common
+
+
+def test_shell_server_contract_rejects_sibling_project_roots() -> None:
+    candidates: list[Path] = []
+    git = shutil.which("git")
+    if git is not None:
+        git_root = Path(git).resolve().parent.parent
+        candidates.extend((git_root / "bin/bash.exe", git_root / "usr/bin/bash.exe"))
+    discovered = shutil.which("bash")
+    if discovered is not None:
+        candidates.append(Path(discovered))
+    bash = next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    prefix = (
+        'source scripts/remote/common.sh; load_server_config_contract "$PWD/configs/server.yaml"; '
+    )
+    configured = (
+        'validate_roots "/srv/neural-manifolds.invalid/canonical/project" '
+        '"/srv/neural-manifolds.invalid/work/project" '
+        '"/srv/neural-manifolds.invalid/checkpoint/project"'
+    )
+    accepted = subprocess.run(
+        [bash, "-c", prefix + configured],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    sibling = configured.replace("canonical/project", "canonical/sibling-project")
+    rejected = subprocess.run(
+        [bash, "-c", prefix + sibling],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode == 2
+    assert "canonical root does not match the selected server config" in rejected.stderr
 
 
 def test_check_only_runs_selected_phase_specific_checks_without_writing(
@@ -87,10 +144,26 @@ def test_check_only_runs_selected_phase_specific_checks_without_writing(
     calls: list[tuple[str, str, Path | None]] = []
     source_checks: list[tuple[Path, Path]] = []
 
-    monkeypatch.setattr(queue_module, "validate_roots", lambda **_kwargs: roots)
-    monkeypatch.setattr(queue_module, "verify_remote_identity", lambda: None)
+    server_path = repo / "configs/server.yaml"
+    server_contract = VerifiedServerConfig(
+        path=server_path,
+        document={},
+        expected_hostname="compute.example.edu",
+        expected_user="researcher",
+        root_bases={
+            "canonical": PurePosixPath("/srv/canonical/researcher"),
+            "work": PurePosixPath("/srv/work/researcher"),
+            "checkpoint": PurePosixPath("/srv/checkpoint/researcher"),
+        },
+        roots=roots,
+        sha256=sha256_file(server_path),
+        size=server_path.stat().st_size,
+    )
+    monkeypatch.setattr(queue_module, "verify_remote_identity", lambda **_kwargs: None)
     monkeypatch.setattr(queue_module, "ensure_existing_roots", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(queue_module, "verify_server_config", lambda *_args: {})
+    monkeypatch.setattr(
+        queue_module, "verify_server_config", lambda *_args, **_kwargs: server_contract
+    )
     monkeypatch.setattr(
         queue_module,
         "verify_deployed_source",
@@ -122,11 +195,11 @@ def test_check_only_runs_selected_phase_specific_checks_without_writing(
                 "--repo-root",
                 str(repo),
                 "--canonical-root",
-                "/private_nas/wangpeng/neural-manifolds",
+                "/srv/canonical/researcher/example-study",
                 "--work-root",
-                "/data1/wangpeng/neural-manifolds-work",
+                "/srv/work/researcher/example-study-work",
                 "--checkpoint-root",
-                "/data2/wangpeng/neural-manifolds-checkpoints",
+                "/srv/checkpoint/researcher/example-study-state",
                 "--run-id",
                 "main-001",
                 "--only-phase",
@@ -141,6 +214,50 @@ def test_check_only_runs_selected_phase_specific_checks_without_writing(
     assert calls == [("fmri", "fmri", manifest), ("models", "fmri", None)]
     assert source_checks == [(repo, repo / "SOURCE_MANIFEST.sha256")]
     assert not roots.state_root("main-001").exists()
+
+
+def test_phase_rechecks_server_config_before_accepting_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical = tmp_path / "canonical"
+    work = tmp_path / "work"
+    checkpoint = tmp_path / "checkpoint"
+    repo = tmp_path / "release"
+    for path in (canonical / "raw", work, checkpoint, repo):
+        path.mkdir(parents=True)
+    roots = ServerRoots(canonical=canonical, work=work, checkpoint=checkpoint)
+    state_root = roots.state_root("main-001")
+    validation_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        queue_module,
+        "run_logged",
+        lambda *_args, **_kwargs: (0, {"pid": 1}),
+    )
+
+    def reject_changed_config() -> None:
+        validation_calls.append(True)
+        raise RuntimeError("server configuration changed after validation")
+
+    phase = next(item for item in PHASES if item.name == "audit")
+    with pytest.raises(RuntimeError, match="server configuration changed"):
+        queue_module.execute_phase(
+            phase=phase,
+            command=["python", "-m", "neural_manifolds.cli"],
+            phase_digest="a" * 64,
+            roots=roots,
+            repo_root=repo,
+            state_root=state_root,
+            run_id="main-001",
+            base_env={},
+            events_path=state_root / "events.jsonl",
+            post_command_validation=reject_changed_config,
+        )
+
+    assert validation_calls == [True]
+    assert not (state_root / "phases/audit/success.json").exists()
+    current = json.loads((state_root / "phases/audit/current.json").read_text(encoding="utf-8"))
+    assert current["status"] == "failed"
 
 
 def _source_release(
@@ -313,44 +430,129 @@ def test_repo_files_cannot_escape_deployed_release(tmp_path: Path) -> None:
         safe_repo_file(repo, "../secret.yaml", label="study")
 
 
+def test_server_config_resolver_accepts_repo_default_or_absolute_non_symlink(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "release"
+    default = repo / "configs/server.yaml"
+    default.parent.mkdir(parents=True)
+    default.write_text("schema_version: 1\n", encoding="utf-8")
+    external = tmp_path / "server-only/server.yaml"
+    external.parent.mkdir()
+    external.write_text("schema_version: 1\n", encoding="utf-8")
+    assert resolve_server_config_path(repo, "configs/server.yaml") == default
+    assert resolve_server_config_path(repo, str(external)) == external
+    with pytest.raises(ValueError, match="inside"):
+        resolve_server_config_path(repo, "../server-only/server.yaml")
+
+    link = tmp_path / "linked-server.yaml"
+    try:
+        link.symlink_to(external)
+    except OSError:
+        pytest.skip("local platform does not permit symlink creation")
+    with pytest.raises(ValueError, match="symbolic link"):
+        resolve_server_config_path(repo, str(link))
+
+
 def test_server_config_must_resolve_and_match_all_roots(tmp_path: Path) -> None:
     pytest.importorskip("yaml")
-    roots = ServerRoots(
-        canonical=tmp_path / "canonical",
-        work=tmp_path / "work",
-        checkpoint=tmp_path / "checkpoint",
-    )
-    server = tmp_path / "server.yaml"
+    repo = tmp_path / "release"
+    repo.mkdir()
+    canonical_root = "/srv/canonical/researcher/example-study"
+    work_root = "/srv/work/researcher/example-study-work"
+    checkpoint_root = "/srv/checkpoint/researcher/example-study-state"
+    server = repo / "configs/server.yaml"
+    server.parent.mkdir()
     server.write_text(
         """
+schema_version: 1
 scientific_gates: false
+identity:
+  expected_hostname: compute.example.edu
+  expected_user: researcher
 storage:
   canonical_root: null
   work_root: null
   checkpoint_root: null
   raw_data_location: canonical_only
+  allowed_parent_mounts:
+    canonical: /srv/canonical/researcher
+    work: /srv/work/researcher
+    checkpoint: /srv/checkpoint/researcher
 scheduler:
   type: tmux
 """.lstrip(),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="unresolved"):
-        verify_server_config(server, roots)
+        verify_server_config(
+            server,
+            repo_root=repo,
+            canonical_root=canonical_root,
+            work_root=work_root,
+            checkpoint_root=checkpoint_root,
+        )
 
     server.write_text(
         f"""
+schema_version: 1
 scientific_gates: false
+identity:
+  expected_hostname: compute.example.edu
+  expected_user: researcher
 storage:
-  canonical_root: {roots.canonical.as_posix()}
-  work_root: {roots.work.as_posix()}
-  checkpoint_root: {roots.checkpoint.as_posix()}
+  canonical_root: {canonical_root}
+  work_root: {work_root}
+  checkpoint_root: {checkpoint_root}
   raw_data_location: canonical_only
+  allowed_parent_mounts:
+    canonical: /srv/canonical/researcher
+    work: /srv/work/researcher
+    checkpoint: /srv/checkpoint/researcher
 scheduler:
   type: tmux
 """.lstrip(),
         encoding="utf-8",
     )
-    verify_server_config(server, roots)
+    contract = verify_server_config(
+        server,
+        repo_root=repo,
+        canonical_root=canonical_root,
+        work_root=work_root,
+        checkpoint_root=checkpoint_root,
+    )
+    assert contract.path == server
+    assert contract.expected_hostname == "compute.example.edu"
+    assert contract.expected_user == "researcher"
+    assert contract.fingerprint == {
+        "path": str(server),
+        "sha256": sha256_file(server),
+        "size": server.stat().st_size,
+    }
+    verify_server_config_unchanged(contract)
+    valid_text = server.read_text(encoding="utf-8")
+    repository_private = repo / "configs/server.private.yaml"
+    repository_private.write_text(valid_text, encoding="utf-8")
+    with pytest.raises(ValueError, match=r"only the tracked configs/server\.yaml"):
+        verify_server_config(
+            repository_private,
+            repo_root=repo,
+            canonical_root=canonical_root,
+            work_root=work_root,
+            checkpoint_root=checkpoint_root,
+        )
+    server.write_text(valid_text + "scientific_gates: false\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate key"):
+        verify_server_config(
+            server,
+            repo_root=repo,
+            canonical_root=canonical_root,
+            work_root=work_root,
+            checkpoint_root=checkpoint_root,
+        )
+    server.write_text(valid_text + "# changed after validation\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="changed after validation"):
+        verify_server_config_unchanged(contract)
 
 
 def test_clinical_lock_is_technical_non_preregistration_and_idempotent(
@@ -418,14 +620,43 @@ def test_run_id_is_bound_to_source_config_and_roots(tmp_path: Path) -> None:
         "repo_root": tmp_path / "release",
         "roots": roots,
         "config_fingerprints": {"study": {"sha256": "b" * 64, "size": 10}},
+        "server_config_fingerprint": {
+            "path": "/srv/checkpoint/researcher/example-study-state/metadata/server.yaml",
+            "sha256": "d" * 64,
+            "size": 120,
+        },
     }
     first = establish_run_contract(source_manifest_sha256="a" * 64, **common)
     base_payload = json.loads(first.read_text(encoding="utf-8"))
     assert "fmri_inputs" not in base_payload
     assert "late_inputs" not in base_payload
+    assert base_payload["server_config"] == common["server_config_fingerprint"]
     assert establish_run_contract(source_manifest_sha256="a" * 64, **common) == first
     with pytest.raises(RuntimeError, match="different source"):
         establish_run_contract(source_manifest_sha256="c" * 64, **common)
+
+    validate_status_server_config(state_root, common["server_config_fingerprint"])
+    changed_server = {
+        **common["server_config_fingerprint"],
+        "sha256": "e" * 64,
+    }
+    with pytest.raises(RuntimeError, match="different server configuration"):
+        validate_status_server_config(state_root, changed_server)
+
+    changed_state = tmp_path / "changed-state"
+    establish_run_contract(
+        source_manifest_sha256="a" * 64,
+        **{**common, "state_root": changed_state},
+    )
+    with pytest.raises(RuntimeError, match="different source"):
+        establish_run_contract(
+            source_manifest_sha256="a" * 64,
+            **{
+                **common,
+                "state_root": changed_state,
+                "server_config_fingerprint": changed_server,
+            },
+        )
 
 
 def test_model_phase_rehashes_verified_manifest_and_defers_brainlm(
