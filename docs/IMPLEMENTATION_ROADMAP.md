@@ -351,6 +351,14 @@ bash scripts/remote/deploy_from_git.sh \
 # Review, then repeat with --apply.
 ```
 
+If the private repository cannot be reached from the server, create an unprefixed
+`git archive --format=tar` for that same verified commit on a trusted machine,
+record its SHA-256 independently, transfer it without embedding credentials, and
+use `scripts/remote/deploy_from_archive.sh` with `--archive`,
+`--archive-sha256`, and the same exact repository/commit. Run `--check-only`, then
+`--dry-run`, then `--apply`. This is an explicit transport fallback, never an
+automatic downgrade or a substitute for the pushed Git commit.
+
 Build the Python environment only from a complete requirements lock whose SHA-256
 has been independently recorded:
 

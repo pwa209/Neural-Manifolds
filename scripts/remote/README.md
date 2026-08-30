@@ -22,7 +22,9 @@ remote sequence is:
 1. `preflight.sh` (read-only);
 2. `bootstrap.sh --check-only`, then `bootstrap.sh --apply`;
 3. push reviewed source to GitHub and select an exact commit;
-4. `deploy_from_git.sh --check-only`, then `--apply`;
+4. `deploy_from_git.sh --check-only`, then `--apply`; if the private repository is
+   not reachable from the server, use the explicit hash-verified archive transport
+   described below instead—there is no automatic network-to-archive downgrade;
 5. build a Python 3.11 environment with `bootstrap_runtime.sh` from the pinned
    requirements lock (SHA-256
    `e9a37e9acafaead6a6f77d966a9e0b4ef083acd73cf0dc78ac3dd193310ce39e`);
@@ -57,6 +59,40 @@ and skips them; a failed or interrupted phase receives a new numbered attempt.
 Changed code/configuration under the same run ID is rejected, so use a new run ID
 instead of overwriting provenance. Acquisition receives the canonical
 `raw` directory directly; active derivatives are written under the fast work root.
+
+### Private-repository archive transport
+
+The archive path is a transport fallback for an already reviewed, pushed exact
+commit; it does not replace GitHub as the source of truth. On a trusted machine
+that can read the private repository, verify the checkout and create an
+unprefixed Git archive, then record its SHA-256 independently:
+
+```bash
+git rev-parse HEAD
+git archive --format=tar --output Neural-Manifolds-<COMMIT>.tar <COMMIT>
+sha256sum Neural-Manifolds-<COMMIT>.tar
+```
+
+Transfer that tar file to a server-local path with an authenticated, resumable
+transport. Do not put a password or token in the command, archive, or repository.
+Inside the authenticated server session, run:
+
+```bash
+bash scripts/remote/deploy_from_archive.sh \
+  --canonical-root <CONFIRMED_CANONICAL_ROOT> \
+  --work-root <CONFIRMED_WORK_ROOT> \
+  --checkpoint-root <CONFIRMED_CHECKPOINT_ROOT> \
+  --repository https://github.com/pwa209/Neural-Manifolds.git \
+  --commit <EXACT_LOWERCASE_COMMIT> \
+  --archive <SERVER_LOCAL_TAR> \
+  --archive-sha256 <INDEPENDENT_SHA256> --check-only
+# Review, then repeat with --dry-run and finally --apply.
+```
+
+The script verifies the archive hash and embedded Git commit, rejects unsafe
+members and links, re-verifies an exact private staging copy, publishes a complete
+source manifest/provenance record, and changes `source/current` only after the
+content-addressed release validates.
 
 The metrics phase includes 100 explicit pre-encoder EEG sensor-row permutation
 repeats and the repeated equal-window/reliability sensitivity stage. The healthy
