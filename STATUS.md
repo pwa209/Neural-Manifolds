@@ -10,17 +10,24 @@ open-data-only, with no scientific result gates.
 
 Rorqual access, account association, modules and storage were checked through
 interactive password/Duo authentication. A dedicated fresh project and scratch
-namespace have been created, and source release `17359bbe1066` was transferred
-and checksum-verified. The source resolver, bounded acquisition worker, source manifest
+namespace have been created. Corrected source release `8b3f69f3d34a` was
+transferred and checksum-verified; it reuses the newly built environment
+`17359bbe1066` after verifying identical dependency inputs. The source resolver, bounded acquisition worker, source manifest
 verification and Slurm qualification script are implemented. New nested
 study-transfer and incremental TMS prediction routines passed synthetic tests.
 No revised empirical result exists. The full local suite passed **282 tests**
 with five platform/dependency skips. Targeted lint and formatting checks passed.
-The detached launcher waits for environment installation, submits H100 software
-qualification, freezes an open registry and then starts bounded acquisition.
-Qualification and acquisition completion require their remote receipts.
-The public checkout additionally contains a test-formatting-only change and
-this status update after the deployed source snapshot; neither changes runtime code.
+**Cluster qualification passed:** 288 tests, no skips, and an NVIDIA H100
+forward/backward CUDA smoke check. The first run exposed Linux directory-move,
+MNE API and pandas test-typing issues; these were repaired and the entire suite
+rerun successfully. Both source and environment identities are retained remotely.
+The DREAM registry has 18 directly downloadable constituent candidates and one
+additional public-provider route awaiting audit. They are acquisition candidates,
+not yet approved for any particular scientific contrast. Raw acquisition has
+resumed from preserved partial downloads. No empirical analysis is running.
+The public checkout's status document is newer than the deployed snapshot;
+runtime code matches that release. Credentials, account identifiers, private
+storage paths, authentication queues, logs and data are excluded from Git.
 
 ## Historical August implementation record
 
