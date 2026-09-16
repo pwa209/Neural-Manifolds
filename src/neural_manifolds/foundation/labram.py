@@ -197,8 +197,36 @@ def _import_factory(repo: Path, specification: str) -> Any:
         raise ImportError(f"cannot import upstream module {module_file}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[unique_name] = module
-    spec.loader.exec_module(module)
+    previous_bytecode = sys.dont_write_bytecode
+    try:
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous_bytecode
     return getattr(module, attribute)
+
+
+def pretrained_backbone_state(payload: dict) -> dict:
+    """Extract the official masked-pretraining student, not a random task head.
+
+    The pinned base checkpoint has student.norm, no attention Q/V biases, and
+    learned layer scales. Mean-pooling fine-tuning defaults would introduce a
+    new fc_norm. Retain the pretrained norm and pool its patch tokens explicitly.
+    """
+    state = payload.get("model", payload)
+    if not isinstance(state, dict):
+        raise ValueError("checkpoint does not contain a state dictionary")
+    state = {k.removeprefix("module."): v for k, v in state.items()}
+    if any(k.startswith("student.") for k in state):
+        state = {
+            k.removeprefix("student."): v for k, v in state.items() if k.startswith("student.")
+        }
+    # Only masked-token prediction components, never backbone parameters.
+    return {
+        k: v
+        for k, v in state.items()
+        if k != "mask_token" and not k.startswith(("lm_head.", "head."))
+    }
 
 
 class OfficialLaBraMEncoder:
@@ -228,12 +256,15 @@ class OfficialLaBraMEncoder:
                 f"checkpoint checksum mismatch: expected {checkpoint_sha256}, got {observed}"
             )
         factory_function = _import_factory(self.repository, factory)
-        model = factory_function(num_classes=0)
+        model = factory_function(
+            num_classes=0,
+            init_values=0.1,
+            qkv_bias=False,
+            use_mean_pooling=False,
+            use_abs_pos_emb=True,
+        )
         payload = torch.load(self.checkpoint, map_location="cpu", weights_only=False)
-        state = payload.get("model", payload) if isinstance(payload, dict) else payload
-        if not isinstance(state, dict):
-            raise ValueError("checkpoint does not contain a state dictionary")
-        state = {key.removeprefix("module."): value for key, value in state.items()}
+        state = pretrained_backbone_state(payload)
         incompatible = model.load_state_dict(state, strict=False)
         missing = [key for key in incompatible.missing_keys if not key.startswith("head.")]
         unexpected = list(incompatible.unexpected_keys)
@@ -304,5 +335,6 @@ class OfficialLaBraMEncoder:
                 "units_model": "microvolts",
                 "patch_samples": 200,
                 "pooling": "mean_valid_channel_patch_tokens",
+                "normalization": "checkpoint_student_final_norm_no_new_fc_norm",
             },
         )

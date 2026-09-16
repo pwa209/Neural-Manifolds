@@ -1,5 +1,9 @@
 # Fresh open-data study on Compute Canada
 
+The [revised executable graph](REVISED_EXECUTION.md) supersedes implementation-gap
+statements below. Refer to the latest top section of `STATUS.md` for deployment
+evidence; planned dependencies, submitted jobs and completed analyses are distinct.
+
 This roadmap implements the September revision. The previous university run is historical and is not resumed. Source code is reused after tests; raw data, environments, caches, fitted representations and results are created afresh. Public Git stores source, configuration and status only. Private cluster identity, paths and logs stay outside Git.
 
 See [Continuous execution](CONTINUOUS_EXECUTION.md) for the controller, bounded retries and exact implemented-versus-pending boundary. The assistant monitor was deleted at the user's request. Source-specific report/timing adjudications are recorded in `configs/dream_adjudication.yaml`; raw numeric labels alone are not admission to a scientific contrast.

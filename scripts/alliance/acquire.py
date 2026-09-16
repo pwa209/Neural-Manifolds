@@ -67,9 +67,32 @@ def run(args):
         atomic_write_json(state_path, state)
         manager = AcquisitionManager(registry)
         reserved = sum(r.get("reserved_bytes", 0) for r in state["datasets"].values())
-        ordered = sorted(registry.datasets, key=lambda d: (d.source.provider == "openneuro", d.id))
+        priority = {
+            name: index
+            for index, name in enumerate(
+                [
+                    "dream_tononi_serial_awakenings",
+                    "propofol_tms_eeg",
+                    "tactile_detection",
+                    "somatosensory_report_task",
+                    "psiconnect",
+                ]
+            )
+        }
+        ordered = sorted(registry.datasets, key=lambda d: (priority.get(d.id, 100), d.id))
         for dataset in ordered:
             previous = state["datasets"].get(dataset.id, {})
+            if previous.get("status") == "complete":
+                # A restart must not spend hours rediscovering sealed downloads.
+                # Signal workers independently bind their inventory to COMPLETE.
+                completed = Path(previous["result"]["release_path"])
+                manifest = completed / ".acquisition/manifest.json"
+                expected = previous["result"]["details"]["manifest_json_sha256"]
+                if (completed / ".acquisition/COMPLETE.json").is_file() and sha256_file(
+                    manifest
+                ) == expected:
+                    continue
+                raise ValueError(f"Previously completed acquisition receipt changed: {dataset.id}")
             entry = {**previous, "status": "checking"}
             state["datasets"][dataset.id] = entry
             atomic_write_json(state_path, state)

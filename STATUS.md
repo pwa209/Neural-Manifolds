@@ -1,5 +1,33 @@
 # Project status
 
+## Revised integrated candidate — 16 September 2026
+
+The revised scientific drivers are now written and connected to the durable
+controller. They cover audited cohorts, frozen/sensor/time-frequency measurements,
+nested study transfer, dimensions/axis ablations, recall/stage sensitivities,
+refitted nulls, signal perturbations, TMS, perception/report specificity,
+PsiConnect and evidence tables/figures. See the [execution map](docs/REVISED_EXECUTION.md).
+
+Source `b6e8e9240f67` failed cluster qualification: 319 tests passed and two
+synthetic-fixture tests inherited production environment settings. The cutover
+supervisor correctly left the old controller untouched. Test-only environment
+isolation now prevents that contamination without disabling production checks.
+The corrected candidate is awaiting fresh cluster qualification and activation.
+This is not a claim that all analyses have run or that all stages are currently
+in Slurm. The full local suite most recently passed 316 tests with five
+platform/dependency skips; the subsequent focused branch/controller suite passed
+14 tests, including the new complete downstream scheduling test. No empirical
+inferential result is reported here.
+
+The real-data encoder canary exposed and repaired mismatched pretraining versus
+fine-tuning construction. Strict backbone loading now retains the pretrained
+normalization. Twelve sampled records across three cohorts were measured.
+Sampled Paris records have undocumented EDF voltage units; no amplitude-based
+guess is used to make them pass. Wisconsin's newly downloaded source has verified
+microvolt headers and a documented, explicitly approximate sparse electrode map.
+
+The records below are historical and superseded by this candidate's execution map.
+
 ## QC repair deployment — 16 September 2026
 
 Release `ecf87f2f1c1f` passed **305 cluster tests with no skips** and the H100

@@ -105,6 +105,47 @@ def test_inventory_completion_schedules_qc_and_recovery(controller):
     assert all(t["input_identity"] == sha256_file(audit) for t in children)
 
 
+def test_revised_graph_registers_all_ready_branches(controller, monkeypatch):
+    import yaml
+
+    monkeypatch.setenv("NM_REVISED_EXECUTION", "1")
+    config = Path("configs/revised_execution.yaml")
+    config.parent.mkdir()
+    config.write_text(
+        yaml.safe_dump({"source_policy": {"study": {}}, "surrogate_repetitions": 100})
+    )
+    controller.add("revised_cohort", "study", Path("/example"), "cohort-identity")
+    cohort = next(iter(controller.state["tasks"].values()))
+    cohort["status"] = "complete"
+    atomic_write_json(Path(cohort["output"]) / "cohort.json", {"units": []})
+    controller.plan()
+    measure = next(t for t in controller.state["tasks"].values() if t["kind"] == "revised_measure")
+    measure["status"] = "complete"
+    atomic_write_json(Path(measure["output"]) / "measurement.json", {"records": []})
+    controller.plan()
+    controller.plan()
+    kinds = [t["kind"] for t in controller.state["tasks"].values()]
+    assert kinds.count("revised_controls") == 100
+    for kind in (
+        "revised_transfer",
+        "revised_recovery",
+        "revised_sensitivities",
+        "revised_perturbation_measure",
+    ):
+        assert kinds.count(kind) == 1
+    perturb = next(
+        t for t in controller.state["tasks"].values() if t["kind"] == "revised_perturbation_measure"
+    )
+    perturb["status"] = "complete"
+    atomic_write_json(Path(perturb["output"]) / "perturbation_measurements.json", {})
+    controller.plan()
+    assert sum(t["kind"] == "revised_robustness" for t in controller.state["tasks"].values()) == 1
+    controller.report()
+    report = json.loads((controller.root / "progress.json").read_text())
+    assert report["revised_core_drivers_implemented"] is True
+    assert report["phase_map"]["R6"]["tasks_by_status"]["ready"] == 103
+
+
 def test_archive_paths_and_missing_report_codes():
     assert safe_member("Data/PSG/a.edf")
     assert not safe_member("../outside")

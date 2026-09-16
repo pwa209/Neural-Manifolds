@@ -1,5 +1,10 @@
 # Continuous revised-study execution
 
+The [revised execution map](REVISED_EXECUTION.md) supersedes the early-stage-only
+description below. Revised execution uses at most two concurrent study jobs and
+one GPU job, with per-task resource requests. The older contract below is retained
+as historical implementation provenance, not the current resource map.
+
 The remote controller submits implemented tasks to Slurm and reconciles durable
 receipts. The hourly assistant monitor was deleted at the user's request and must
 not be recreated without a new request. Remote acquisition and the controller

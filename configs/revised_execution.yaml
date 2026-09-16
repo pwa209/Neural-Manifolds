@@ -1,0 +1,68 @@
+schema_version: 1
+status: exploratory_non_preregistered
+scientific_gates: false
+seed: 20260916
+dream_seconds: 20
+sampling_hz: 200
+sparse_channels: [Fp1, C3, O1]
+high_density_channels: [Fp1, Fp2, F3, F4, F7, F8, C3, C4, Cz, P3, P4, Pz, O1, O2]
+filter_hz: [0.5, 30.0]
+minimum_clean_seconds: 10
+peak_to_peak_volts: 0.0005
+flat_standard_deviation_volts: 0.00000001
+profile_dimensions: [1, 2, 3, 4, 5]
+trajectory_dimensions: 2
+trajectory_states: 3
+regularization: [0.1, 1.0, 10.0]
+bootstrap_repetitions: 1000
+surrogate_repetitions: 100
+recovery_repetitions: 200
+source_policy:
+  dream_tononi_serial_awakenings:
+    report_semantics: explicit_de_dewr_ne
+    study_group: wisconsin_tononi
+    participant_namespace: wisconsin_tononi
+    timing: standardized_preawakening_record_with_no_documented_exception
+    montage: approximate_hydrocel256_sparse_no_interpolation
+    source_evidence: ExperimentalDescription.txt and HydroCelGSN256v10.sfp; manufacturer 256-channel 10-10 equivalence table page 8
+    channel_aliases: {Chan 37: Fp1, Chan 59: C3, Chan 116: O1}
+    position_error_cm: {Fp1: 1.053985, C3: 1.029910, O1: 1.257897}
+    position_equivalence: approximate_not_identical_to_10_20
+  dream_set_02:
+    report_semantics: explicit_de_dewr_ne
+    study_group: paris_oudiette
+    participant_namespace: paris_oudiette
+    timing: standardized_preawakening_record_with_no_documented_exception
+    montage: referenced_scalp
+    source_evidence: ExperimentalDescription.txt; DREAM categorization procedure and data preprocessing
+  dream_set_03:
+    report_semantics: explicit_de_dewr_ne
+    study_group: pisa_dreem
+    participant_namespace: pisa_dreem
+    timing: final_140_seconds_to_awakening
+    montage: bipolar_separate_track
+    source_evidence: ExperimentalDescription.txt; DREAM categorization procedure and data preprocessing
+  dream_set_16:
+    report_semantics: explicit_de_dewr_ne
+    study_group: turku
+    participant_namespace: turku_noreika
+    timing: standardized_preawakening_record_with_no_documented_exception
+    montage: referenced_scalp
+    source_evidence: Noreika_DATA1/ExperimentalDescription.txt; dreamless, white, uncertain and dreamful categories
+  dream_set_17:
+    report_semantics: explicit_de_dewr_ne
+    study_group: oslo
+    participant_namespace: oslo_unresolved_aliases
+    timing: preawakening_with_edf_padding
+    montage: referenced_scalp
+    source_evidence: Aamodt_evening_sleep/ExperimentalDescription.txt; awakening marker, cropping and questionnaire
+  dream_set_18:
+    report_semantics: explicit_de_dewr_ne
+    study_group: oslo
+    participant_namespace: oslo_unresolved_aliases
+    timing: preawakening_with_edf_padding
+    montage: referenced_scalp
+    source_evidence: Aamodt_morning_sleep/ExperimentalDescription.txt; serial awakenings and questionnaire
+overlap_policy: same_laboratory_held_out_together; unresolved_within_lab_aliases_exclude_subject_transfer_claim
+pretraining_overlap: unresolved_encoder_results_not_strict_unseen_pretraining_claims
+timing_reference: https://doi.org/10.1038/s41467-025-61945-1

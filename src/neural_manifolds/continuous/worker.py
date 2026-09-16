@@ -88,6 +88,10 @@ def run(spec_path: Path) -> int:
 
             signal_qc(Path(spec["input"]), output)
             artifacts = [output / "signal_qc.json"]
+        elif spec["kind"].startswith("revised_"):
+            from neural_manifolds.revised.driver import run as revised_run
+
+            artifacts = revised_run(spec, output)
         else:
             raise ValueError(f"Unimplemented task kind: {spec['kind']}")
         receipt.update(status="complete", artifacts={str(p): sha256_file(p) for p in artifacts})

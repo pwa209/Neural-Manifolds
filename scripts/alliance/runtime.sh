@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Reuse a fresh Alliance environment only when dependency inputs are identical.
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 source scripts/alliance/environment.sh
 digest=$(python scripts/alliance/verify_release.py)
 environment_digest="${NM_ENV_RELEASE:-$digest}"

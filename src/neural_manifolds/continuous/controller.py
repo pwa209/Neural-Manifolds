@@ -67,6 +67,24 @@ class Slurm:
         return live.splitlines()[0] if live else "UNKNOWN"
 
     def submit(self, spec: Path, name: str, root: Path, account: str) -> str:
+        kind = json.loads(spec.read_text())["kind"]
+        resources = {
+            "revised_measure": ["--cpus-per-task=4", "--mem=32G", "--time=08:00:00", "--gpus=1"],
+            "revised_transfer": ["--cpus-per-task=4", "--mem=32G", "--time=12:00:00"],
+            "revised_recovery": ["--cpus-per-task=4", "--mem=16G", "--time=24:00:00"],
+            "revised_controls": ["--cpus-per-task=4", "--mem=32G", "--time=12:00:00"],
+            "revised_sensitivities": ["--cpus-per-task=4", "--mem=32G", "--time=12:00:00"],
+            "revised_tms": ["--cpus-per-task=4", "--mem=64G", "--time=24:00:00"],
+            "revised_tactile": ["--cpus-per-task=4", "--mem=64G", "--time=12:00:00"],
+            "revised_osf": ["--cpus-per-task=4", "--mem=32G", "--time=08:00:00"],
+            "revised_boundary": ["--cpus-per-task=4", "--mem=32G", "--time=12:00:00"],
+        }.get(kind, ["--cpus-per-task=2", "--mem=8G", "--time=01:00:00"])
+        if kind == "revised_perturbation_measure":
+            resources = ["--cpus-per-task=4", "--mem=32G", "--time=12:00:00", "--gpus=1"]
+        if kind == "revised_robustness":
+            resources = ["--cpus-per-task=4", "--mem=32G", "--time=24:00:00"]
+        if kind in {"revised_measure", "revised_perturbation_measure"}:
+            account = os.environ["NM_GPU_ACCOUNT"]
         value = command(
             [
                 "sbatch",
@@ -75,9 +93,7 @@ class Slurm:
                 account,
                 "--job-name",
                 name,
-                "--cpus-per-task=2",
-                "--mem=8G",
-                "--time=01:00:00",
+                *resources,
                 "--chdir",
                 str(Path.cwd()),
                 "--output",
@@ -171,17 +187,128 @@ class Controller:
     def plan(self):
         acquisition = json.loads(self.acquisition.read_text())
         self.state["acquisition_status"] = acquisition.get("status")
+        seeds = json.loads(os.environ.get("NM_INVENTORY_SEED_STATES", "[]"))
+        imported = {}
+        for seed in seeds:
+            for task in json.loads(Path(seed).read_text())["tasks"].values():
+                if (
+                    task["kind"] == "inventory"
+                    and task["status"] == "complete"
+                    and valid_receipt(task)
+                ):
+                    path = Path(task["output"]) / "inventory.json"
+                    imported[task["dataset_id"]] = str(path)
+        self.state["imported_inventory"] = imported
         for dataset, entry in acquisition["datasets"].items():
             if entry["status"] != "complete":
                 continue
             release = Path(entry["result"]["release_path"])
             marker = release / ".acquisition/COMPLETE.json"
-            self.add("inventory", dataset, release, sha256_file(marker))
+            if dataset not in imported:
+                self.add("inventory", dataset, release, sha256_file(marker))
         for task in list(self.state["tasks"].values()):
             if task["kind"] == "inventory" and task["status"] == "complete":
                 audit = Path(task["output"]) / "inventory.json"
-                self.add("recovery", task["dataset_id"], audit, sha256_file(audit))
-                self.add("signal_qc", task["dataset_id"], audit, sha256_file(audit))
+                if os.environ.get("NM_REVISED_EXECUTION") != "1":
+                    self.add("recovery", task["dataset_id"], audit, sha256_file(audit))
+                    self.add("signal_qc", task["dataset_id"], audit, sha256_file(audit))
+        if os.environ.get("NM_REVISED_EXECUTION") == "1":
+            self.plan_revised()
+
+    def plan_revised(self):
+        import yaml
+
+        policy = yaml.safe_load(Path("configs/revised_execution.yaml").read_text())
+        expected = set(policy["source_policy"])
+        for dataset, name in self.state.get("imported_inventory", {}).items():
+            if dataset in expected:
+                path = Path(name)
+                self.add("revised_cohort", dataset, path, sha256_file(path))
+        acquisition = json.loads(self.acquisition.read_text())
+        for dataset, kind in [
+            ("propofol_tms_eeg", "revised_tms"),
+            ("tactile_detection", "revised_tactile"),
+            ("somatosensory_report_task", "revised_osf"),
+        ]:
+            entry = acquisition["datasets"].get(dataset, {})
+            if entry.get("status") == "complete":
+                marker = Path(entry["result"]["release_path"]) / ".acquisition/COMPLETE.json"
+                self.add(kind, dataset, marker, sha256_file(marker))
+        subset = os.environ.get("NM_PSICONNECT_SUBSET_MARKER")
+        if subset and Path(subset).is_file():
+            self.add("revised_boundary", "psiconnect", Path(subset), sha256_file(subset))
+        for task in list(self.state["tasks"].values()):
+            if task["kind"] == "revised_perturbation_measure" and task["status"] == "complete":
+                path = Path(task["output"]) / "perturbation_measurements.json"
+                self.add("revised_robustness", "dream_portfolio", path, sha256_file(path))
+            if task["status"] != "complete" or task["dataset_id"] not in expected:
+                continue
+            if task["kind"] == "inventory":
+                path = Path(task["output"]) / "inventory.json"
+                self.add("revised_cohort", task["dataset_id"], path, sha256_file(path))
+            if task["kind"] == "revised_cohort":
+                path = Path(task["output"]) / "cohort.json"
+                self.add("revised_measure", task["dataset_id"], path, sha256_file(path))
+        measured = {
+            t["dataset_id"]: t
+            for t in self.state["tasks"].values()
+            if t["kind"] == "revised_measure" and t["status"] == "complete"
+        }
+        if not expected.issubset(measured):
+            return
+        paths = [Path(measured[d]["output"]) / "measurement.json" for d in sorted(expected)]
+        bundle = self.root / "measurement-inputs.json"
+        document = {"inputs": [{"path": str(p), "sha256": sha256_file(p)} for p in paths]}
+        if bundle.exists() and json.loads(bundle.read_text()) != document:
+            raise ValueError("completed_measurement_bundle_changed")
+        if not bundle.exists():
+            atomic_write_json(bundle, document)
+        for kind in [
+            "revised_transfer",
+            "revised_recovery",
+            "revised_sensitivities",
+            "revised_perturbation_measure",
+        ]:
+            self.add(kind, "dream_portfolio", bundle, sha256_file(bundle))
+        for index in range(policy["surrogate_repetitions"]):
+            self.add("revised_controls", f"dream_null_{index}", bundle, sha256_file(bundle))
+        terminal = [
+            t
+            for t in self.state["tasks"].values()
+            if t["kind"]
+            in {
+                "revised_transfer",
+                "revised_recovery",
+                "revised_sensitivities",
+                "revised_tms",
+                "revised_osf",
+                "revised_tactile",
+                "revised_controls",
+                "revised_boundary",
+                "revised_robustness",
+            }
+            and t["status"] == "complete"
+        ]
+        if terminal:
+            names = {
+                "revised_transfer": "transfer.json",
+                "revised_recovery": "axis_recovery.json",
+                "revised_sensitivities": "sensitivities.json",
+                "revised_tms": "tms.json",
+                "revised_osf": "specificity.json",
+                "revised_tactile": "specificity.json",
+                "revised_controls": "controls.json",
+                "revised_boundary": "boundary.json",
+                "revised_robustness": "robustness.json",
+            }
+            sources = [Path(t["output"]) / names[t["kind"]] for t in terminal]
+            document = {
+                "inputs": [{"path": str(p), "sha256": sha256_file(p)} for p in sorted(sources)]
+            }
+            identity = hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
+            synthesis = self.root / "bundles" / f"synthesis-{identity}.json"
+            atomic_write_json(synthesis, document)
+            self.add("revised_synthesis", "dream_portfolio", synthesis, sha256_file(synthesis))
 
     def reconcile(self):
         for task in self.state["tasks"].values():
@@ -216,10 +343,33 @@ class Controller:
             t["status"] in {"submitting", "submitted", "running"}
             for t in self.state["tasks"].values()
         )
-        for task in self.state["tasks"].values():
+        priority = {
+            "revised_cohort": 0,
+            "revised_measure": 1,
+            "revised_transfer": 2,
+            "revised_tms": 3,
+            "revised_tactile": 3,
+            "revised_osf": 3,
+            "revised_sensitivities": 4,
+            "revised_recovery": 5,
+            "revised_boundary": 6,
+            "revised_perturbation_measure": 5,
+            "revised_robustness": 6,
+            "revised_synthesis": 7,
+            "revised_controls": 8,
+            "inventory": 9,
+        }
+        gpu_active = any(
+            t["kind"] in {"revised_measure", "revised_perturbation_measure"}
+            and t["status"] in {"submitting", "submitted", "running"}
+            for t in self.state["tasks"].values()
+        )
+        for task in sorted(self.state["tasks"].values(), key=lambda t: priority.get(t["kind"], 10)):
             if active >= self.maximum_jobs:
                 break
             if task["status"] != "ready" or task.get("retry_after", 0) > time.time():
+                continue
+            if task["kind"] in {"revised_measure", "revised_perturbation_measure"} and gpu_active:
                 continue
             task["attempt"] += 1
             name = f"nm-{task['task_id']}-a{task['attempt']}"
@@ -232,6 +382,10 @@ class Controller:
                 task["submission_error"] = str(exc)
             self.save()
             active += 1
+            gpu_active = gpu_active or task["kind"] in {
+                "revised_measure",
+                "revised_perturbation_measure",
+            }
 
     def acquisition_watch(self):
         state = json.loads(self.acquisition.read_text())
@@ -286,13 +440,52 @@ class Controller:
     def report(self):
         tasks = list(self.state["tasks"].values())
         counts = {k: sum(t["status"] == k for t in tasks) for k in {t["status"] for t in tasks}}
+        revised = os.environ.get("NM_REVISED_EXECUTION") == "1"
+        phase_kinds = {
+            "R1_R3": ("inventory", "revised_cohort"),
+            "R4": ("revised_recovery",),
+            "R5": ("revised_measure",),
+            "R6": (
+                "revised_transfer",
+                "revised_sensitivities",
+                "revised_controls",
+                "revised_perturbation_measure",
+                "revised_robustness",
+            ),
+            "R7": ("revised_tms",),
+            "R8": ("revised_tactile", "revised_osf", "revised_boundary"),
+            "R10": ("revised_synthesis",),
+        }
+        revised_map = {
+            phase: {
+                "drivers_implemented": True,
+                "status": "tasks_registered"
+                if any(t["kind"] in kinds for t in tasks)
+                else "waiting_for_verified_inputs",
+                "tasks_by_status": {
+                    status: sum(t["kind"] in kinds and t["status"] == status for t in tasks)
+                    for status in sorted(counts)
+                },
+                "kinds": list(kinds),
+            }
+            for phase, kinds in phase_kinds.items()
+        }
+        revised_map.update(
+            R0="qualification_required_before_controller_launch",
+            R2=self.state.get("acquisition_status"),
+            R9="optional_extensions_not_commissioned_by_revised_controller",
+        )
         report = {
             "updated_at": now(),
             "source_digest": self.source,
             "task_counts": counts,
             "scientific_gates": False,
             "full_pipeline_implemented": False,
-            "phase_map": {
+            "revised_core_drivers_implemented": revised,
+            "implementation_scope": "core_plus_context_boundary_optional_extensions_separate",
+            "phase_map": revised_map
+            if revised
+            else {
                 "R0": "source_qualification_required_before_controller_launch",
                 "R1": "open_registry_frozen_independence_audit_pending",
                 "R2": self.state.get("acquisition_status"),
