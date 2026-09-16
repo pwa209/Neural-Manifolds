@@ -1,0 +1,26 @@
+schema_version: 1
+status: ongoing_source_audit_not_preregistration
+scientific_gates: false
+default_primary_admission: unresolved
+datasets:
+  dream_set_01:
+    source: https://doi.org/10.6084/m9.figshare.22226692
+    evidence_member: Zhang & Wamsley 2019/ExperimentalDescription.txt
+    evidence_section: DREAM categorization procedure
+    source_verified_on: '2026-09-16'
+    preserve_original_experience_codes: true
+    strict_de_ne_contrast: not_admitted
+    reason: The source states participants were not asked whether experience occurred without recall. Numeric zero therefore does not establish the strict no-experience construct needed for the primary contrast.
+    permitted_role: recalled_mentation_sensitivity_after_timing_and_cohort_audit
+    segment_timing: unresolved
+    timing_note: The source documents some delayed report markers and intervening wake. Do not infer a uniformly uncontaminated pre-awakening interval from filename stage or segment end.
+  dream_set_06:
+    source: https://doi.org/10.6084/m9.figshare.23274596.v2
+    evidence_member: REM_Turku/ExperimentalDescription.txt
+    evidence_section: DREAM categorization procedure
+    source_verified_on: '2026-09-16'
+    preserve_original_experience_codes: true
+    report_categories: explicit_experience_without_recall_and_no_experience
+    primary_n2_contrast: not_available_in_audited_records
+    permitted_role: rem_sensitivity_after_timing_and_cohort_audit
+    cohort_independence: unresolved

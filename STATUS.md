@@ -1,5 +1,35 @@
 # Project status
 
+## Continuous execution — 16 September 2026
+
+The new continuous controller release `1f10ff342786` passed **295 tests on
+Rorqual, with no skips**, plus the H100 CUDA check. Local validation passed
+290 tests with five platform/dependency skips. It is running with a healthy
+heartbeat and a two-CPU-job concurrency limit. The first four archive/header
+inventory receipts were verified complete. Acquisition is supervised separately;
+the controller recovered a terminated downloader without deleting partial data.
+The termination cause is not established and remains a monitoring item.
+
+Hourly assistant continuation is enabled to finish the remaining revised
+scientific integrations, inspect receipts, diagnose failures and publish sanitized
+progress. It is not a claim that the entire scientific pipeline is implemented.
+Current automatic work covers acquisition supervision, per-release metadata/header
+inventory, and a dependent length-matched AR(1) recovery component. Full signal
+QC, axis-specific recovery, revised measurement/model integration, TMS/specificity
+and final evidence synthesis remain active implementation work. See the
+[continuous execution runbook](docs/CONTINUOUS_EXECUTION.md) for exact boundaries.
+
+The source audit also identified a report-semantics limitation in DREAM set 1:
+numeric 0/2 coding does not establish the strict DE-versus-NE distinction when
+experience without recall was not separately elicited. The raw codes are preserved;
+`configs/dream_adjudication.yaml` records its sensitivity-only disposition and the
+unresolved segment timing. This new adjudication is for the next scientific adapter
+integration; the current controller performs no inferential analysis.
+
+The current public documentation/adjudication is newer than the deployed source
+snapshot. Deployed controller runtime code matches the tested release. No empirical
+study results have been produced, and no result-dependent go/no-go gates are introduced.
+
 ## September revision and fresh Compute Canada execution
 
 The [revised scientific design](docs/STUDY_REVISION_20260916.md) and

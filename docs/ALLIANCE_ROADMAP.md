@@ -2,6 +2,8 @@
 
 This roadmap implements the September revision. The previous university run is historical and is not resumed. Source code is reused after tests; raw data, environments, caches, fitted representations and results are created afresh. Public Git stores source, configuration and status only. Private cluster identity, paths and logs stay outside Git.
 
+See [Continuous execution](CONTINUOUS_EXECUTION.md) for the controller, bounded retries, scheduled continuation and exact implemented-versus-pending boundary. Source-specific report/timing adjudications are recorded in `configs/dream_adjudication.yaml`; raw numeric labels alone are not admission to a scientific contrast.
+
 ## Phase mapping
 
 | Phase | Scientific or technical output | Execution and dependency |

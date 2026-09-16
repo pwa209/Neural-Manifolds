@@ -8,6 +8,11 @@ The new Compute Canada execution uses only open data and starts with fresh
 downloads, an isolated environment and new run records. Journal selection will
 follow the evidence and audience; no destination is guaranteed.
 
+The [continuous execution runbook](docs/CONTINUOUS_EXECUTION.md) distinguishes
+the automatic server controller from ongoing scientific-pipeline development.
+Implemented components advance through Slurm receipts; missing integrations are
+explicit work items, never successful placeholder stages.
+
 The central empirical object is a five-axis participant-condition profile:
 
 1. structured repertoire;
