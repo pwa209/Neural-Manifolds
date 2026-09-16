@@ -36,7 +36,7 @@ def selected_path(name):
     )
 
 
-def command(args, root=None, timeout=600):
+def command(args, root=None, timeout=600, input_text=None):
     if args[0] == "git":
         args = [
             "git",
@@ -47,7 +47,13 @@ def command(args, root=None, timeout=600):
             *args[1:],
         ]
     return subprocess.run(
-        args, cwd=root, check=True, text=True, capture_output=True, timeout=timeout
+        args,
+        cwd=root,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        input=input_text,
     ).stdout
 
 
@@ -60,14 +66,23 @@ def acquire(root: Path, maximum_bytes=20 * 1024**3):
         origin = command(["git", "config", "--get", "remote.origin.url"], root).strip()
         if origin != REPOSITORY:
             raise ValueError("subset_repository_mismatch")
-        command(["git", "checkout", "--detach", REVISION], root)
-        command(["git", "annex", "init", "Neural Manifolds public EEG subset"], root)
         names = command(["git", "ls-tree", "-r", "--name-only", REVISION], root).splitlines()
         selected = sorted(n for n in names if selected_path(n))
         if not any(EEG.fullmatch(n) for n in selected):
             raise ValueError("no_official_context_specific_FieldTrip_files")
+        # Avoid checking out hundreds of thousands of irrelevant MRI pointers.
+        # This must precede checkout, even though no annex data are fetched yet.
+        command(
+            ["git", "sparse-checkout", "set", "--no-cone", "--stdin"],
+            root,
+            input_text="".join("/" + name + "\n" for name in selected),
+        )
+        command(["git", "checkout", "--detach", REVISION], root)
+        command(["git", "annex", "init", "Neural Manifolds public EEG subset"], root)
         keys = {}
-        for line in command(["git", "annex", "find", "--anything", "--json"], root).splitlines():
+        for line in command(
+            ["git", "annex", "find", "--anything", "--json", "--", *selected], root
+        ).splitlines():
             row = json.loads(line)
             if row["file"] in selected:
                 keys[row["file"]] = row["key"]

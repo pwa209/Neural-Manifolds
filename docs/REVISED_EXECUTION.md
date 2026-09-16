@@ -39,6 +39,16 @@ locks and storage checks. The subset has a 20 GiB cap and 100 GiB free-space
 headroom; it does not silently request the much larger MRI archive. Existing
 acquisition retry counters are retained across controller replacement. A failed
 software or provenance check needs repair; it is not endlessly retried.
+The PsiConnect acquirer configures sparse checkout **before** materializing the
+working tree, so unused MRI pointers do not exhaust project file-count quotas.
+Check project-ID byte and inode quotas, not just filesystem free space or
+default user/group quota output.
+
+After quota inspection, a single additional acquisition pass is scheduled behind
+the active worker with a 300 GiB portfolio cap (still 100 GiB per source and
+100 GiB free-space headroom). Existing reservations nearly exhaust the initial
+180 GiB cap. This is a bounded continuation, not a reset of exhausted automatic
+retry counters or unlimited retrying of failed sources.
 
 ## Measurement limitations that remain visible
 
@@ -76,9 +86,19 @@ software or provenance check needs repair; it is not endlessly retried.
 Core and branch tests exercise fold separation, exact joins, spectrum preservation,
 gap-safe temporal controls, pairing, FieldTrip axes and honest partial synthesis.
 The real encoder canary has successfully measured recordings from three cohorts.
+The subsequent Wisconsin check measured four additional participant recordings.
+The deployed release passed 323 cluster tests and an H100 GPU check; the final
+local suite passed 318 tests with five platform/dependency skips. The synthetic
+forest-plot test export was visually inspected; empirical figures are not yet
+available and have not been visually inspected.
 This does not yet validate every acquired source, every full-size job, or journal
 readiness. Generated empirical figures require inspection at final display size;
 the artifact records automated rendering separately from visual review.
+
+The execution graph does not imply that every design ambition is complete.
+Formal independent-sample power/precision simulation, the public subjective-scale
+join for PsiConnect and commissioning optional clinical/fMRI extensions remain
+separate work. Source-specific unavailable measurements are retained explicitly.
 
 The assistant's recurring monitor remains deleted. Remote execution does not
 depend on it or on a continuously connected desktop.

@@ -1,6 +1,6 @@
 # Project status
 
-## Revised integrated candidate — 16 September 2026
+## Revised continuous deployment — 16 September 2026
 
 The revised scientific drivers are now written and connected to the durable
 controller. They cover audited cohorts, frozen/sensor/time-frequency measurements,
@@ -12,12 +12,32 @@ Source `b6e8e9240f67` failed cluster qualification: 319 tests passed and two
 synthetic-fixture tests inherited production environment settings. The cutover
 supervisor correctly left the old controller untouched. Test-only environment
 isolation now prevents that contamination without disabling production checks.
-The corrected candidate is awaiting fresh cluster qualification and activation.
+Corrected release `0cf0639c40b3` passed **323 cluster tests with no skips** and
+the H100 CUDA check. The revised controller is active and healthy; its first two
+cohort-audit jobs completed, and subsequent cohorts are submitted. Four sampled Wisconsin records were successfully
+measured with the frozen encoder. These are software/measurement checks, not
+inferential findings.
 This is not a claim that all analyses have run or that all stages are currently
-in Slurm. The full local suite most recently passed 316 tests with five
-platform/dependency skips; the subsequent focused branch/controller suite passed
-14 tests, including the new complete downstream scheduling test. No empirical
-inferential result is reported here.
+in Slurm. The full local suite passed **318 tests with five platform/dependency
+skips**. Downstream measurements, transfer, recovery, sensitivities, 100 null
+replicates, robustness and evidence synthesis are connected through durable
+dependencies. TMS, perception/report and context branches become eligible when
+their respective downloads finish. They are not all simultaneously submitted.
+Seventeen DREAM releases are complete; the TMS release and the separate bounded
+PsiConnect EEG/behaviour subset are being acquired.
+
+A PsiConnect full-pointer checkout hit the shared project file-count quota and
+interrupted the controller. Only unmaterialized, Git-recoverable MRI pointers
+were removed; no acquired data were deleted. The subset acquirer now configures
+sparse checkout before checkout and passes its targeted local and cluster test.
+It is deployed separately as `b19236dbac7f`. The scientific controller resumed
+from the unchanged qualified release and reconciled completed jobs successfully.
+
+Remaining scope boundaries: optional clinical/fMRI extensions are not activated;
+the public subjective-scale mapping for PsiConnect has not been adjudicated;
+formal sample-structure power/precision analysis and complete empirical source
+validation remain outstanding. The executable core is not a claim that every
+scientific objective in the design document has already been implemented or run.
 
 The real-data encoder canary exposed and repaired mismatched pretraining versus
 fine-tuning construction. Strict backbone loading now retains the pretrained
