@@ -386,7 +386,7 @@ def _native_average_reference(
         raise ValueError("canonicalized native EEG channel names are not unique")
     native.rename_channels(rename, allow_duplicates=False)
     eeg_names = [rename[name] for name in eeg_original]
-    native.pick(eeg_names, ordered=True)
+    native.pick(eeg_names)
     quality = detect_bad_channels(native.get_data(), float(native.info["sfreq"]))
     bad_names = [native.ch_names[index] for index in quality.bad_indices]
     maximum_bad = int(np.floor(maximum_interpolation_fraction * len(native.ch_names)))
@@ -452,7 +452,7 @@ def preprocess_mne_raw(
     available = [name for name in canonical_channels if name in clean.ch_names]
     if not available:
         raise ValueError("none of the canonical channels are present")
-    clean.pick(available, ordered=True)
+    clean.pick(available)
 
     quality = detect_bad_channels(clean.get_data(), float(clean.info["sfreq"]))
     bad_names = [clean.ch_names[index] for index in quality.bad_indices]
@@ -480,7 +480,7 @@ def preprocess_mne_raw(
         clean.info["bads"] = interpolated_names
         clean.interpolate_bads(reset_bads=True, mode="accurate")
     if require_complete_canonical:
-        clean.pick(list(canonical_channels), ordered=True)
+        clean.pick(list(canonical_channels))
         if list(clean.ch_names) != list(canonical_channels):
             raise RuntimeError("harmonised preprocessing did not produce the configured montage")
     clean.set_eeg_reference("average", projection=False)

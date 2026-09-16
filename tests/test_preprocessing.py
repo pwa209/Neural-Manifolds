@@ -114,8 +114,7 @@ class _FakeMNERaw:
         del allow_duplicates
         self.ch_names = [mapping.get(name, name) for name in self.ch_names]
 
-    def pick(self, names: list[str], *, ordered: bool) -> None:
-        del ordered
+    def pick(self, names: list[str]) -> None:
         indices = [self.ch_names.index(name) for name in names]
         self._data = self._data[indices]
         self._channel_types = [self._channel_types[index] for index in indices]

@@ -124,7 +124,7 @@ def test_benchmark_stage_publishes_only_scalars_and_explicit_unavailable_status(
     output = pd.read_parquet(benchmark_path)
     assert output["unit_id"].tolist() == ["rest", "event", "clinical"]
     output = output.set_index("unit_id")
-    assert output.loc["rest", list(CONVENTIONAL_FEATURES)].apply(np.isfinite).all()
+    assert np.isfinite(output.loc["rest", list(CONVENTIONAL_FEATURES)].to_numpy(dtype=float)).all()
     assert output.loc["rest", "legacy_conventional_status"] == "available"
     assert output.loc["rest", "benchmark_status"] == "computed"
     assert output.loc["rest", "wsmi_status"] == "available_validated_deterministic"

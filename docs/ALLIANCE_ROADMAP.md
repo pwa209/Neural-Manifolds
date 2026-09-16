@@ -26,6 +26,8 @@ Use a dedicated personal subdirectory of verified project storage for raw files 
 
 Load the recorded Python, CUDA, Arrow and Git Annex modules on Rorqual. PyTorch uses the Alliance wheelhouse. The final environment is recorded with `pip freeze`, module inventory and `pip check`. The existing university dependency lock is not claimed to describe this new environment. Compute nodes must use prestaged packages and model files; no internet downloads are attempted in GPU jobs.
 
+For code-only repairs, `runtime.sh` can reuse the newly built Alliance environment after comparing the dependency specification, constraints and module configuration hashes. It explicitly selects the current release's source and verifies the import path. Qualification records both source and environment identities; it never silently claims a reused environment was rebuilt.
+
 ## Acquisition contract
 
 The initial source budget is 100 GiB per dataset and 180 GiB total, with a 100 GiB filesystem headroom check. Shared-project quotas are checked separately before launch; filesystem free space is not a substitute for group quota. Expand only after a fresh quota check. Concurrency is one downloader, using a process lock and individual dataset locks. Failed sources remain explicit in a partial summary while other admitted sources continue.

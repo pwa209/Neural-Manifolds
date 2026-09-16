@@ -161,6 +161,24 @@ def _validate_read_only_permissions(root: Path) -> dict[str, Any]:
     }
 
 
+def _publish_sealed_directory(staging: Path, release: Path) -> None:
+    """Move sealed content while allowing POSIX to update the root's parent link.
+
+    Only the directory root is temporarily owner-writable, under the dataset
+    lock. Content remains sealed. Finally restores sealing on either path;
+    interruption after rename is recovered by acquire's existing-release path.
+    """
+    mode = stat.S_IMODE(staging.stat().st_mode) & ~0o222
+    staging.chmod(mode | stat.S_IWUSR)
+    published = False
+    try:
+        os.replace(staging, release)
+        published = True
+    finally:
+        target = release if published else staging
+        target.chmod(mode)
+
+
 class AcquisitionManager:
     def __init__(
         self,
@@ -257,7 +275,7 @@ class AcquisitionManager:
                     expected_release_version=dataset.source.version,
                 )
                 permissions = _remove_write_permissions(staging)
-                os.replace(staging, release)
+                _publish_sealed_directory(staging, release)
                 return AcquisitionResult(
                     dataset_id=dataset.id,
                     release_version=dataset.source.version,
@@ -323,7 +341,7 @@ class AcquisitionManager:
                 expected_release_version=dataset.source.version,
             )
             permissions = _remove_write_permissions(staging)
-            os.replace(staging, release)
+            _publish_sealed_directory(staging, release)
             return AcquisitionResult(
                 dataset_id=dataset.id,
                 release_version=dataset.source.version,

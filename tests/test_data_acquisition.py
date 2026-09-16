@@ -94,6 +94,27 @@ def test_acquisition_publishes_then_only_validates_existing_release(tmp_path: Pa
     _restore_owner_write(release)
 
 
+def test_publication_root_is_writable_only_during_rename(tmp_path, monkeypatch):
+    from neural_manifolds.data import acquisition
+
+    staging, release = tmp_path / "staging", tmp_path / "release"
+    staging.mkdir()
+    content = staging / "raw.bin"
+    content.write_bytes(b"raw")
+    acquisition._remove_write_permissions(staging)
+    replace = acquisition.os.replace
+
+    def checked_replace(source, target):
+        assert source.stat().st_mode & 0o200
+        assert not (source / "raw.bin").stat().st_mode & 0o222
+        replace(source, target)
+
+    monkeypatch.setattr(acquisition.os, "replace", checked_replace)
+    acquisition._publish_sealed_directory(staging, release)
+    assert not release.stat().st_mode & 0o222
+    _restore_owner_write(release)
+
+
 def test_permission_drift_is_rejected_by_validation_and_healed_by_acquire(
     tmp_path: Path,
 ) -> None:

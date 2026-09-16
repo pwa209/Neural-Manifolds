@@ -5,12 +5,11 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:h100:1
 set -euo pipefail
-source scripts/alliance/environment.sh
-digest=$(python scripts/alliance/verify_release.py)
-source "$NM_PROJECT_ROOT/environments/$digest/bin/activate"
+source scripts/alliance/runtime.sh
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 receipt="$NM_PROJECT_ROOT/provenance/qualification/$SLURM_JOB_ID"
 mkdir -p "$receipt"
+printf 'source=%s\nenvironment=%s\n' "$NM_SOURCE_RELEASE" "$NM_ENV_RELEASE" > "$receipt/runtime.txt"
 python -m pip check
 python -m pytest -q -p no:cacheprovider --junitxml="$receipt/tests.xml"
 python - <<'PY'
