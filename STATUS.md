@@ -2,21 +2,27 @@
 
 ## Continuous execution — 16 September 2026
 
-The new continuous controller release `1f10ff342786` passed **295 tests on
-Rorqual, with no skips**, plus the H100 CUDA check. Local validation passed
-290 tests with five platform/dependency skips. It is running with a healthy
-heartbeat and a two-CPU-job concurrency limit. The first four archive/header
-inventory receipts were verified complete. Acquisition is supervised separately;
-the controller recovered a terminated downloader without deleting partial data.
-The termination cause is not established and remains a monitoring item.
+The updated continuous controller release `5ee3a29b9ac0` passed **298 tests on
+Rorqual, with no skips**, plus the H100 CUDA check. Local full-suite validation
+passed 292 tests with five platform/dependency skips; the subsequent targeted
+scheduling/QC suite passed all ten tests. The new controller has been activated
+after stopping the prior scheduler and preserving acquisition retry counters.
+It retains the two-CPU-job concurrency limit. Eleven original-source releases
+were verified downloaded at the latest check, with another downloading.
+Acquisition continues separately without deleting partial data. The earlier
+downloader termination cause remains unknown.
 
-Hourly assistant continuation is enabled to finish the remaining revised
-scientific integrations, inspect receipts, diagnose failures and publish sanitized
-progress. It is not a claim that the entire scientific pipeline is implemented.
+The hourly assistant monitor has been deleted at the user's request. The remote
+controller remains independent of it. The entire revised scientific pipeline is
+not yet implemented or queued.
 Current automatic work covers acquisition supervision, per-release metadata/header
-inventory, and a dependent length-matched AR(1) recovery component. Full signal
-QC, axis-specific recovery, revised measurement/model integration, TMS/specificity
-and final evidence synthesis remain active implementation work. See the
+inventory, a dependent length-matched AR(1) recovery component, and sampled signal
+QC. Analysis-window QC, axis-specific recovery, revised measurement/model
+integration, TMS/specificity and final evidence synthesis remain implementation
+work. The new signal-QC worker is qualified and deployed; its checkpoints preserve explicit
+unavailable records and do not imply cohort admission. The pinned core encoder
+source and checkpoint have now been prestaged and checksum-recorded on Rorqual.
+See the
 [continuous execution runbook](docs/CONTINUOUS_EXECUTION.md) for exact boundaries.
 
 The source audit also identified a report-semantics limitation in DREAM set 1:

@@ -91,6 +91,20 @@ def test_outcome_values_do_not_control_scheduling(controller):
     assert len(controller.scheduler.calls) == 1
 
 
+def test_inventory_completion_schedules_qc_and_recovery(controller):
+    controller.add("inventory", "study", Path("/example"), "identity")
+    task = next(iter(controller.state["tasks"].values()))
+    task["status"] = "complete"
+    audit = Path(task["output"]) / "inventory.json"
+    atomic_write_json(audit, {"files": []})
+    controller.plan()
+    controller.plan()
+    children = [t for t in controller.state["tasks"].values() if t["kind"] != "inventory"]
+    assert {t["kind"] for t in children} == {"signal_qc", "recovery"}
+    assert len(children) == 2
+    assert all(t["input_identity"] == sha256_file(audit) for t in children)
+
+
 def test_archive_paths_and_missing_report_codes():
     assert safe_member("Data/PSG/a.edf")
     assert not safe_member("../outside")

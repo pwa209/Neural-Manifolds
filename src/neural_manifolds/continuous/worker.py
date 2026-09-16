@@ -83,6 +83,11 @@ def run(spec_path: Path) -> int:
         elif spec["kind"] == "recovery":
             recovery(Path(spec["input"]), output / "recovery.json")
             artifacts = [output / "recovery.json"]
+        elif spec["kind"] == "signal_qc":
+            from neural_manifolds.continuous.signal_qc import run as signal_qc
+
+            signal_qc(Path(spec["input"]), output)
+            artifacts = [output / "signal_qc.json"]
         else:
             raise ValueError(f"Unimplemented task kind: {spec['kind']}")
         receipt.update(status="complete", artifacts={str(p): sha256_file(p) for p in artifacts})

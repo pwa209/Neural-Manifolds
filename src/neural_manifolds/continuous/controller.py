@@ -181,6 +181,7 @@ class Controller:
             if task["kind"] == "inventory" and task["status"] == "complete":
                 audit = Path(task["output"]) / "inventory.json"
                 self.add("recovery", task["dataset_id"], audit, sha256_file(audit))
+                self.add("signal_qc", task["dataset_id"], audit, sha256_file(audit))
 
     def reconcile(self):
         for task in self.state["tasks"].values():
@@ -295,7 +296,7 @@ class Controller:
                 "R0": "source_qualification_required_before_controller_launch",
                 "R1": "open_registry_frozen_independence_audit_pending",
                 "R2": self.state.get("acquisition_status"),
-                "R3": "archive_and_header_inventory_automatic_signal_qc_pending",
+                "R3": "archive_inventory_and_sampled_signal_qc_automatic_cohort_audit_pending",
                 "R4": "length_matched_ar1_component_automatic_axis_specific_validation_pending",
                 "R5": "needs_multicohort_and_fast_track_integration",
                 "R6": "tested_nested_prediction_routine_needs_audited_features",
