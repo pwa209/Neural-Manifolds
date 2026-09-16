@@ -13,9 +13,10 @@ synthetic-fixture tests inherited production environment settings. The cutover
 supervisor correctly left the old controller untouched. Test-only environment
 isolation now prevents that contamination without disabling production checks.
 Corrected release `0cf0639c40b3` passed **323 cluster tests with no skips** and
-the H100 CUDA check. The revised controller is active and healthy; its first two
-cohort-audit jobs completed, and subsequent cohorts are submitted. Four sampled Wisconsin records were successfully
-measured with the frozen encoder. These are software/measurement checks, not
+the H100 CUDA check. The revised controller is active and healthy; all six
+cohort-audit jobs completed, and the first measurement job is submitted.
+Four sampled Wisconsin records were successfully measured with the frozen
+encoder. These are software/measurement checks, not
 inferential findings.
 This is not a claim that all analyses have run or that all stages are currently
 in Slurm. The full local suite passed **318 tests with five platform/dependency
