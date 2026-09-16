@@ -1,9 +1,12 @@
 # Neural Manifolds
 
-This repository implements the study **A conserved manifold regime separates
-consciousness from responsiveness**. It is an exploratory, non-preregistered
-research project aimed at *Nature* or *Science*, with *Nature Human Behaviour*
-as a realistic destination if the complete evidence chain is weaker.
+This repository develops **Neural dynamics of reported experience across independent settings**.
+It is exploratory and non-preregistered, with no scientific result gates.
+The [September revision](docs/STUDY_REVISION_20260916.md) supersedes the August
+proposal: five dynamical axes are candidates to test, not assumed necessities.
+The new Compute Canada execution uses only open data and starts with fresh
+downloads, an isolated environment and new run records. Journal selection will
+follow the evidence and audience; no destination is guaranteed.
 
 The central empirical object is a five-axis participant-condition profile:
 
@@ -31,7 +34,11 @@ classification.
 - Clinical outcomes remain a separate, late transfer target. The healthy pipeline
   is protected by a technical provenance lock, never a scientific go/no-go gate.
 
-## Implemented workflow
+## Legacy implemented workflow
+
+The graph below documents the earlier implementation. It is not the revised
+cross-study analysis plan. See the revision and Alliance roadmap for new work;
+implementation, qualification and empirical completion are distinct states.
 
 The integrated local phase order is:
 

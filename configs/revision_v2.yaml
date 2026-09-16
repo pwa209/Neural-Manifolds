@@ -1,0 +1,27 @@
+schema_version: 1
+revision: open-experience-v2-20260916
+status: exploratory_non_preregistered
+scientific_gates: false
+fresh_original_source_acquisition: true
+required_access: open
+primary_dataset_ids: [dream_tononi_serial_awakenings, propofol_tms_eeg, tactile_detection, somatosensory_report_task]
+secondary_dataset_ids: [psiconnect]
+optional_dataset_ids: [doc_polysomnography, propofol_fmri]
+excluded_dataset_ids: [cogitate_meeg, doc_resting_eeg]
+excluded_accessions: ["zenodo:806176"]
+dream_registry_article: "22133105"
+dream_admission: verified_public_constituent_release_and_independent_cohort
+experience_without_recall: separate_category_not_ordinal
+outer_unit: independent_study_or_overlapping_cohort_group
+inner_unit: participant
+primary_predictive_loss: participant_weighted_log_loss
+model_families: [spectral_arousal, nonlinear_scalar, conventional_multivariate, shared_dynamics, dataset_specific]
+candidate_profile_dimensions: [1, 2, 3, 4, 5]
+five_axes_required: false
+fast_track: independent_sensor_or_csd
+tms_primary: held_out_participant_increment_over_condition_and_conventional_eeg
+clinical_required: false
+fmri_required: false
+initial_maximum_total_bytes: 193273528320
+initial_maximum_source_bytes: 107374182400
+initial_datasets: [dream_tononi_serial_awakenings, somatosensory_report_task, tactile_detection, propofol_tms_eeg]
