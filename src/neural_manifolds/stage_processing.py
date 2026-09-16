@@ -25,7 +25,7 @@ def _record_key(recording_id: str) -> str:
     return hashlib.sha256(recording_id.encode("utf-8")).hexdigest()[:20]
 
 
-def read_raw_recording(path: str | Path) -> Any:
+def read_raw_recording(path: str | Path, *, edf_annotation_encoding: str | None = None) -> Any:
     try:
         import mne
     except ImportError as exc:  # pragma: no cover - server EEG environment
@@ -41,7 +41,12 @@ def read_raw_recording(path: str | Path) -> Any:
     }
     if suffix not in readers:
         raise ValueError(f"unsupported recording format: {source}")
-    return readers[suffix](source, preload=False, verbose="ERROR")
+    options = {}
+    if edf_annotation_encoding is not None:
+        if suffix not in {".edf", ".bdf"}:
+            raise ValueError("EDF annotation encoding is only valid for EDF/BDF")
+        options["encoding"] = edf_annotation_encoding
+    return readers[suffix](source, preload=False, verbose="ERROR", **options)
 
 
 def infer_mains_frequency(raw: Any) -> float:

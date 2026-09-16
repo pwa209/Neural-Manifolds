@@ -139,7 +139,7 @@ def test_inventory_never_admits_metadata_as_scientific_qc(tmp_path):
     raw = tmp_path / "raw"
     (raw / ".acquisition").mkdir(parents=True)
     (raw / ".acquisition/COMPLETE.json").write_text("{}")
-    (raw / "archive.rar").write_bytes(b"not extracted")
+    (raw / "archive.7z").write_bytes(b"not extracted")
     result = inventory(raw, tmp_path / "inventory.json")
     assert not result["analysis_ready"]
     assert result["issues"][0]["reason"] == "archive_adapter_required"

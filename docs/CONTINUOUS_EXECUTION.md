@@ -38,9 +38,10 @@ Each completed inventory schedules a length-matched AR(1) recovery component.
 This is a narrow estimability smoke test, **not** validation of all proposed axes,
 uncertainty coverage, measurement invariance, or the biological hypothesis.
 
-The qualified updated release also schedules sampled, label-blind signal QC. ZIP
+The qualified updated release also schedules sampled, label-blind signal QC. ZIP/RAR
 recordings are materialized one at a time in bounded scratch space, verified
-against the inventory size and ZIP integrity, inspected and removed. Per-recording
+against the inventory size and archive integrity (including independent RAR CRC32),
+inspected and removed. Per-recording
 checkpoints support resumption. Unsupported archive formats and unreadable signals
 remain explicit unavailable rows, not admitted cohorts. This is sampled diagnostic
 QC, not a replacement for analysis-window QC, channel-type adjudication or cohort
@@ -57,7 +58,7 @@ inspect the old controller and drain or stop scheduling before replacing it.
    awakening occurs in the provided segment. Do not apply Tononi's filename or
    segment convention to other cohorts without source evidence. Audit participant
    reuse and laboratory grouping before treating datasets as independent studies.
-2. Add safe bounded RAR handling and analysis-window QC. Resolve duration, channel,
+2. Complete analysis-window QC. Resolve duration, channel,
    artifact, treatment, age and report exclusions with a recorded denominator.
 3. Complete axis-specific observed-length/missingness recovery and uncertainty
    coverage. The existing unrestricted state dictionaries are not automatically

@@ -147,10 +147,14 @@ def _inspect_recording(
     row: dict[str, Any],
     *,
     study: StudyConfig,
+    reader_options: dict[str, Any] | None = None,
+    discard_absolute_clock: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     source = Path(str(row["source_path"])).resolve(strict=True)
-    raw = read_raw_recording(source)
+    raw = read_raw_recording(source, **(reader_options or {}))
     try:
+        if discard_absolute_clock:
+            raw.set_meas_date(None)
         source_inventory = recording_inventory(source, raw=raw)
         source_types = list(raw.get_channel_types())
         type_counts = pd.Series(source_types, dtype=str).value_counts().sort_index().to_dict()

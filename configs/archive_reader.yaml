@@ -1,0 +1,10 @@
+schema_version: 1
+name: 7-Zip
+version: '26.03'
+platform: linux_x86_64
+download_url: https://github.com/ip7z/7zip/releases/download/26.03/7z2603-linux-x64.tar.xz
+package_sha256: dc99eff5008f1ab79bd7084c68513701547a808a89502bf4133683535ab3c695
+binary_sha256: eab4c8d7f193e3d6d3237370bbcaa879a160a3f1dc82202207e27baeab79b6ac
+binary_member_preference: [7zzs, 7zz]
+upstream_release_digest_verified: true
+binary_redistributed_in_repository: false

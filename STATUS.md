@@ -1,5 +1,26 @@
 # Project status
 
+## QC repair deployment — 16 September 2026
+
+Release `ecf87f2f1c1f` passed **305 cluster tests with no skips** and the H100
+CUDA check. Local validation passed **300 tests with five platform/dependency
+skips**; lint and formatting checks passed. The release is deployed with a healthy
+controller after the preceding controller's remaining job finished. Targeted
+cluster rechecks successfully inspected the annotation-error recording and all
+seven recordings in the previously unsupported RAR dataset, plus all eight
+invalid-clock EDFs. Raw files are unchanged; repairs operate on temporary
+QC copies or reader options, with explicit provenance. Successful diagnostic
+decoding does not establish scientific eligibility or annotation semantics.
+
+Four ZIP members remain unavailable. Fresh SHA-256 and upstream MD5 checks match;
+both Python and libarchive fail to decode these members with valid size/CRC. The
+latest public metadata still reports the same source versions and hashes. No CRC
+checks were bypassed. See [QC repair policy](docs/QC_REPAIRS.md).
+
+These are diagnostic-reader repairs, not completion of the revised study.
+Cross-study, TMS, specificity and synthesis integrations remain unfinished. The
+assistant monitor remains deleted; remote early-stage progression is independent.
+
 ## Continuous execution — 16 September 2026
 
 The updated continuous controller release `5ee3a29b9ac0` passed **298 tests on

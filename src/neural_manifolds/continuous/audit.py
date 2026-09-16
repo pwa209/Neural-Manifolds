@@ -120,6 +120,20 @@ def inventory(release: Path, output: Path) -> dict:
                         files.append(row)
             except (OSError, zipfile.BadZipFile) as exc:
                 issues.append({"path": relative, "reason": str(exc)})
+        elif path.suffix.lower() == ".rar":
+            from neural_manifolds.continuous.rar_archive import members, metadata_member
+
+            try:
+                for item in members(path):
+                    files.append({"container": relative, **item, "header_status": "deferred_to_qc"})
+                    if PurePosixPath(item["member"]).name.lower() == "records.csv":
+                        records.extend(
+                            read_records(
+                                metadata_member(path, item), f"{relative}::{item['member']}"
+                            )
+                        )
+            except (OSError, ValueError, RuntimeError) as exc:
+                issues.append({"path": relative, "reason": "rar_adapter_error: " + str(exc)})
         else:
             row = {"container": None, "member": relative, "bytes": path.stat().st_size}
             try:
@@ -130,7 +144,7 @@ def inventory(release: Path, output: Path) -> dict:
                     if path.stat().st_size > 16 * 1024**2:
                         raise ValueError("Records file exceeds metadata size limit")
                     records.extend(read_records(path.read_bytes(), relative))
-                if path.suffix.lower() in {".rar", ".7z"}:
+                if path.suffix.lower() == ".7z":
                     issues.append({"path": relative, "reason": "archive_adapter_required"})
             except Exception as exc:
                 row["error"] = str(exc)

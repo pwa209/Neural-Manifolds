@@ -8,18 +8,21 @@ import os
 import shutil
 import tempfile
 import zipfile
+import zlib
 from contextlib import contextmanager
 from pathlib import Path
 
 from neural_manifolds.config import load_study
 from neural_manifolds.continuous.audit import safe_member
+from neural_manifolds.continuous.edf_compat import qc_clock_copy
+from neural_manifolds.continuous.rar_archive import member_stream
 from neural_manifolds.provenance import atomic_write_json, sha256_file
 from neural_manifolds.stages.qc import _inspect_recording
 
 
 @contextmanager
 def materialize_recording(release: Path, item: dict, scratch: Path):
-    """Copy one ZIP member to a generated scratch name; raw release stays sealed."""
+    """Copy one ZIP/RAR member to a generated scratch name; raw stays sealed."""
     member = item["member"]
     if not safe_member(member):
         raise ValueError("Unsafe recording member")
@@ -30,7 +33,7 @@ def materialize_recording(release: Path, item: dict, scratch: Path):
         yield source
         return
     container = (release / item["container"]).resolve(strict=True)
-    if not container.is_relative_to(release) or container.suffix.lower() != ".zip":
+    if not container.is_relative_to(release) or container.suffix.lower() not in {".zip", ".rar"}:
         raise ValueError("Unsupported recording container")
     expected = int(item["bytes"])
     if expected <= 0 or expected > 8 * 1024**3:
@@ -40,17 +43,16 @@ def materialize_recording(release: Path, item: dict, scratch: Path):
         raise ValueError("Insufficient scratch headroom")
     with tempfile.TemporaryDirectory(prefix="nm-qc-", dir=scratch) as temporary:
         destination = Path(temporary) / ("recording" + Path(member).suffix.lower())
-        with zipfile.ZipFile(container) as archive:
-            metadata = archive.getinfo(member)
-            if metadata.file_size != expected:
-                raise ValueError("Archive entry size differs from inventory")
-            written = 0
-            with archive.open(metadata) as source, destination.open("xb") as target:
-                while chunk := source.read(1024 * 1024):
-                    written += len(chunk)
-                    if written > expected:
-                        raise ValueError("Archive entry exceeded declared size")
-                    target.write(chunk)
+        if container.suffix.lower() == ".rar":
+            with member_stream(container, member) as source, destination.open("xb") as target:
+                written = _copy_bounded(source, target, expected, expected_crc=item["crc32"])
+        else:
+            with zipfile.ZipFile(container) as archive:
+                metadata = archive.getinfo(member)
+                if metadata.file_size != expected:
+                    raise ValueError("Archive entry size differs from inventory")
+                with archive.open(metadata) as source, destination.open("xb") as target:
+                    written = _copy_bounded(source, target, expected)
         if written != expected:
             raise ValueError("Truncated recording extraction")
         destination.chmod(0o444)
@@ -58,6 +60,21 @@ def materialize_recording(release: Path, item: dict, scratch: Path):
             yield destination
         finally:
             destination.chmod(0o600)
+
+
+def _copy_bounded(source, target, expected: int, *, expected_crc: str | None = None) -> int:
+    written = 0
+    checksum = 0
+    while chunk := source.read(min(1024 * 1024, expected - written + 1)):
+        written += len(chunk)
+        if written > expected:
+            raise ValueError("Archive entry exceeded declared size")
+        target.write(chunk)
+        if expected_crc is not None:
+            checksum = zlib.crc32(chunk, checksum)
+    if expected_crc is not None and f"{checksum:08X}" != expected_crc.upper():
+        raise ValueError("Archive member CRC32 mismatch")
+    return written
 
 
 def run(audit_path: Path, output: Path) -> dict:
@@ -97,17 +114,44 @@ def run(audit_path: Path, output: Path) -> dict:
                 "labels_consumed": [],
             }
             try:
-                with materialize_recording(release, item, scratch) as source:
-                    row, channel_rows = _inspect_recording(
-                        {
-                            "recording_id": key,
-                            "dataset_id": release.parent.name,
-                            "source_path": str(source),
-                            "events_path": None,
-                            "channels_path": None,
-                        },
-                        study=study,
-                    )
+                with (
+                    materialize_recording(release, item, scratch) as original,
+                    qc_clock_copy(original, scratch) as (source, clock_repair),
+                ):
+                    inspection_row = {
+                        "recording_id": key,
+                        "dataset_id": release.parent.name,
+                        "source_path": str(source),
+                        "events_path": None,
+                        "channels_path": None,
+                    }
+                    options = {"discard_absolute_clock": True} if clock_repair else {}
+                    try:
+                        row, channel_rows = _inspect_recording(
+                            inspection_row, study=study, **options
+                        )
+                    except Exception as exc:
+                        if source.suffix.lower() not in {
+                            ".edf",
+                            ".bdf",
+                        } or "invalid byte in at least one annotations channel" not in str(exc):
+                            raise
+                        row, channel_rows = _inspect_recording(
+                            inspection_row,
+                            study=study,
+                            reader_options={"edf_annotation_encoding": "latin1"},
+                            **options,
+                        )
+                        record["annotation_decoding"] = {
+                            "encoding": "latin1",
+                            "reason": "source_annotations_not_valid_utf8",
+                            "annotation_semantics_verified": False,
+                            "permitted_use": "sampled_signal_qc_only",
+                        }
+                    if clock_repair:
+                        record["clock_compatibility"] = clock_repair
+                        row["absolute_clock_available"] = False
+                        row["original_recording_sha256"] = clock_repair["source_sha256"]
                     # Temporary paths are not durable data references.
                     row.pop("source_path", None)
                     row["materialization"] = (
