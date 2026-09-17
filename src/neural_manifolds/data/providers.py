@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
@@ -501,15 +503,33 @@ class CommandRunner:
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["GIT_TERMINAL_PROMPT"] = "0"
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=cwd,
             env=environment,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            check=False,
+            start_new_session=os.name == "posix",
         )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Killing only DataLad's parent leaves git-annex children holding locks.
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            try:
+                process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+                process.communicate(timeout=10)
+            raise
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         self.records.append(
             {
                 "command": command,
@@ -525,6 +545,58 @@ class CommandRunner:
                 f"stderr tail: {result.stderr[-1000:]}"
             )
         return result
+
+
+def acquire_annex_batches(runner, staging: Path, *, batch_size=8, timeout=1200, attempts=2):
+    """Resume missing objects in bounded groups, without a recursive DataLad stream."""
+    from neural_manifolds.provenance import atomic_write_json
+
+    response = runner.run(["git", "annex", "find", "--not", "--in=here", "--json"], cwd=staging)
+    missing = [json.loads(line)["file"] for line in response.stdout.splitlines() if line.strip()]
+    if batch_size < 1 or attempts < 1:
+        raise ValueError("positive batch size and attempt limit required")
+    receipt = staging / ".git" / "annex" / "bounded-transfer.json"
+    for start in range(0, len(missing), batch_size):
+        batch = missing[start : start + batch_size]
+        for attempt in range(1, attempts + 1):
+            atomic_write_json(
+                receipt,
+                {
+                    "status": "transferring",
+                    "initial_missing": len(missing),
+                    "batch_start": start,
+                    "batch_size": len(batch),
+                    "attempt": attempt,
+                    "timeout_seconds": timeout,
+                    "pid": os.getpid(),
+                },
+            )
+            try:
+                runner.run(
+                    ["git", "annex", "get", "--jobs=2", "--", *batch], cwd=staging, timeout=timeout
+                )
+                remaining = runner.run(
+                    ["git", "annex", "find", "--not", "--in=here", "--", *batch], cwd=staging
+                ).stdout.strip()
+                if remaining:
+                    raise ProviderError("bounded annex batch still has missing content")
+                print(f"ANNEX_BATCH_COMPLETE {start + len(batch)}/{len(missing)}", flush=True)
+                break
+            except (subprocess.TimeoutExpired, ProviderError) as exc:
+                atomic_write_json(
+                    receipt,
+                    {
+                        "status": "retry" if attempt < attempts else "failed",
+                        "batch_start": start,
+                        "attempt": attempt,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                if attempt == attempts:
+                    raise ProviderError(
+                        "bounded annex transfer failed; partial objects preserved"
+                    ) from exc
+    atomic_write_json(receipt, {"status": "batches_complete", "initial_missing": len(missing)})
 
 
 class OpenNeuroProvider(Provider):
@@ -599,7 +671,11 @@ class OpenNeuroProvider(Provider):
                 f"OpenNeuro revision differs from registry: "
                 f"{head} != {self.dataset.source.revision}"
             )
-        runner.run(["datalad", "get", "-r", "."], cwd=staging, timeout=7 * 24 * 3600)
+        if (staging / ".gitmodules").is_file() and (staging / ".gitmodules").read_text().strip():
+            raise ProviderError(
+                "OpenNeuro subdatasets require an explicit recursive acquisition adapter"
+            )
+        acquire_annex_batches(runner, staging)
         missing = runner.run(
             ["git", "annex", "find", "--not", "--in=here"],
             cwd=staging,

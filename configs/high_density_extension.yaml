@@ -1,0 +1,22 @@
+schema_version: 1
+status: exploratory_non_preregistered
+scientific_gates: false
+scope: additional_high_density_reported_experience_transfer
+base_policy: configs/revised_execution.yaml
+dataset_id: dream_set_09
+reused_datasets: [dream_set_16, dream_set_17, dream_set_18]
+source_rule:
+  report_semantics: explicit_binary_experience_with_ambiguous_codes_excluded
+  study_group: rome_sapienza
+  participant_namespace: rome_multiple_awakenings
+  timing: standardized_preawakening_record_with_no_documented_exception
+  montage: referenced_scalp
+  source_evidence: Multiple awakenings/ExperimentalDescription.txt; amendment 1 approved 2026-02-26; 2=experience, 0=no experience, -2=ambiguous no-experience/experience-without-recall
+  channel_aliases: {'01': O1}
+  channel_alias_evidence: source acquisition description lists O1 and O2 among the 28 scalp derivations; EDF names the corresponding left occipital channel 01
+limitations:
+  - dream_contents_not_collected_in_Rome_no_claim_of_verified_content_recall
+  - Rome_binary_experience_report_not_identical_to_content_recall_assay
+  - all_nonempty_source_quality_remarks_excluded_conservatively_before_measurement
+  - original_strict_core_outputs_remain_unchanged
+  - pretraining_overlap_unresolved
