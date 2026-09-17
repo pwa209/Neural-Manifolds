@@ -29,8 +29,13 @@ these checks. The original failed outputs are retained for provenance.
 
 The initial source-path/event repair was deployed and tested on real recordings.
 Those recordings then failed the original channel-quality rule. The duration-aware
-flatline correction passed targeted local tests and is prepared for a new real-data
-canary. It is not yet a verified successful full TMS analysis.
+flatline correction passed 18 targeted server tests. The fixed three-record
+canary still fails the remaining channel-quality criteria. The full cohort is
+therefore being evaluated with those criteria preserved, to record its actual
+eligible denominator rather than treating three exclusions as a software failure
+or silently relaxing thresholds. The repaired full job is tracked by the existing
+controller with its distinct source digest and output path; original failed
+outputs are retained. It is not yet a verified successful full TMS analysis.
 
 Perception acquisition was moved back to the internet-connected login host after
 compute-node requests timed out. Missing annex transfers resumed. Source hashes,
