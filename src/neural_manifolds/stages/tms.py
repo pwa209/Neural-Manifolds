@@ -259,6 +259,41 @@ def select_direct_tms_units(cohort_labels: pd.DataFrame) -> pd.DataFrame:
     return selected
 
 
+def audited_pulse_events(source_path, events, event_id, first_samp, sampling_hz):
+    """Use R128 semantics from BIDS when BrainVision has recoded trigger names."""
+    codes = [
+        code
+        for label, code in event_id.items()
+        if label.lower().replace(" ", "") == "response/r128"
+    ]
+    if codes:
+        return events[np.isin(events[:, 2], codes)], {"pulse_event_authority": "raw_Response_R128"}
+    sidecar = source_path.with_name(source_path.name.replace("_eeg.vhdr", "_events.tsv"))
+    if sidecar == source_path or not sidecar.is_file():
+        raise ValueError("no audited Response/R128 pulse marker or BIDS events sidecar")
+    table = pd.read_csv(sidecar, sep="\t", encoding="utf-8-sig")
+    pulse = table[table.trial_type.astype(str).str.replace(" ", "").str.lower().eq("response/r128")]
+    if pulse.empty:
+        raise ValueError("BIDS events contain no Response/R128 pulses")
+    samples = pd.to_numeric(pulse["sample"], errors="raise").to_numpy(float)
+    onset = pd.to_numeric(pulse.onset, errors="raise").to_numpy(float)
+    if not np.isfinite(samples).all() or not np.equal(samples, np.floor(samples)).all():
+        raise ValueError("noninteger BIDS pulse samples")
+    if not np.allclose(samples, onset * sampling_hz, atol=1.0, rtol=0):
+        raise ValueError("BIDS pulse onset/sample disagreement")
+    expected = samples.astype(np.int64) + first_samp
+    if len(np.unique(expected)) != len(expected) or np.any(np.diff(expected) <= 0):
+        raise ValueError("duplicate or unsorted BIDS pulses")
+    selected = events[np.isin(events[:, 0], expected)]
+    if not np.array_equal(selected[:, 0], expected):
+        raise ValueError("BIDS pulses do not match recorded annotation samples")
+    return selected, {
+        "pulse_event_authority": "BIDS_Response_R128_sample_matched_to_raw",
+        "pulse_events_sidecar": str(sidecar),
+        "pulse_events_sidecar_sha256": sha256_file(sidecar),
+    }
+
+
 def build_tms_epoch_manifest(
     *,
     cohort_labels: str | Path,
@@ -285,20 +320,19 @@ def build_tms_epoch_manifest(
     failures: list[dict[str, Any]] = []
     for row in selected.to_dict(orient="records"):
         try:
-            source_path = Path(str(row["source_path"])).resolve(strict=True)
+            # BrainVision companion names are relative to the logical BIDS header,
+            # not to its git-annex storage target. Hashing still follows symlinks.
+            source_path = Path(str(row["source_path"])).absolute()
+            if not source_path.is_file():
+                raise FileNotFoundError(source_path)
             source_hash = sha256_file(source_path)
             raw = read_raw_recording(source_path)
             raw.load_data()
             auxiliary = _auxiliary_channel_inventory(raw)
             events, event_id = mne.events_from_annotations(raw, verbose="ERROR")
-            pulse_codes = [
-                code
-                for description, code in event_id.items()
-                if "r128" in description.lower().replace(" ", "")
-            ]
-            if not pulse_codes:
-                raise ValueError("no audited Response/R128 pulse marker found")
-            pulse_events = events[np.isin(events[:, 2], pulse_codes)]
+            pulse_events, event_authority = audited_pulse_events(
+                source_path, events, event_id, int(raw.first_samp), float(raw.info["sfreq"])
+            )
             pulse_events_source = pulse_events.copy()
             raw.pick("eeg")
             original_eeg_names = tuple(str(value) for value in raw.ch_names)
@@ -332,6 +366,7 @@ def build_tms_epoch_manifest(
             bad = detect_bad_channels(
                 interpolated,
                 float(clean.info["sfreq"]),
+                flat_minimum_duration_seconds=0.1,
             )
             if (
                 len(bad.bad_indices) / len(keep)
@@ -510,6 +545,8 @@ def build_tms_epoch_manifest(
                     "condition": row["condition"],
                     "source_path": str(source_path),
                     "source_sha256": source_hash,
+                    **event_authority,
+                    "flatline_minimum_duration_seconds": 0.1,
                     "epochs_path": str(archive),
                     "epochs_sha256": sha256_file(archive),
                     "channel_order_json": json.dumps(channel_order, separators=(",", ":")),
@@ -561,6 +598,7 @@ def build_tms_epoch_manifest(
                 }
             )
     if not rows:
+        atomic_write_json(destination / "tms-epoch-failures.json", {"failures": failures})
         raise RuntimeError("all TMS epoch preparations failed")
     manifest_path = _atomic_parquet(pd.DataFrame(rows), destination / "tms-epoch-manifest.parquet")
     channel_provenance_path = _atomic_parquet(

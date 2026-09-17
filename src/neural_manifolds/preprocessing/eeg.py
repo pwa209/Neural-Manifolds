@@ -105,6 +105,7 @@ def detect_bad_channels(
     flat_tolerance_volts: float = 1e-12,
     flat_fraction_limit: float = 0.05,
     robust_threshold: float = 5.0,
+    flat_minimum_duration_seconds: float = 0.0,
 ) -> BadChannelResult:
     """Flag channels using label-blind robust signal-quality statistics.
 
@@ -123,7 +124,20 @@ def detect_bad_channels(
         raise ValueError("data contains non-finite samples")
 
     differences = np.diff(x, axis=1)
-    flat_fraction = np.mean(np.abs(differences) <= flat_tolerance_volts, axis=1)
+    flat = np.abs(differences) <= flat_tolerance_volts
+    if flat_minimum_duration_seconds < 0:
+        raise ValueError("flat minimum duration cannot be negative")
+    minimum = max(1, int(np.ceil(flat_minimum_duration_seconds * sfreq)))
+    if minimum > 1:
+        # Isolated equal adjacent ADC samples at high sampling rates are not
+        # sustained flatlining. Count only runs meeting a physical duration.
+        flat_fraction = np.zeros(x.shape[0])
+        for channel, mask in enumerate(flat):
+            edges = np.diff(np.r_[False, mask, False].astype(np.int8))
+            lengths = np.flatnonzero(edges == -1) - np.flatnonzero(edges == 1)
+            flat_fraction[channel] = lengths[lengths >= minimum].sum() / mask.size
+    else:
+        flat_fraction = np.mean(flat, axis=1)
     variance = np.var(x, axis=1, ddof=1)
     log_variance_z = robust_zscore(np.log(np.maximum(variance, np.finfo(float).tiny)))
 
