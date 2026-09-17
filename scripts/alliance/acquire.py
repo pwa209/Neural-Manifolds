@@ -80,6 +80,12 @@ def run(args):
             )
         }
         ordered = sorted(registry.datasets, key=lambda d: (priority.get(d.id, 100), d.id))
+        selected = getattr(args, "only_datasets", None)
+        if selected:
+            unknown = set(selected) - {d.id for d in registry.datasets}
+            if unknown:
+                raise ValueError(f"Unknown requested datasets: {sorted(unknown)}")
+            ordered = [d for d in ordered if d.id in selected]
         for dataset in ordered:
             previous = state["datasets"].get(dataset.id, {})
             if previous.get("status") == "complete":
@@ -113,7 +119,10 @@ def run(args):
             atomic_write_json(state_path, state)
         state["status"] = (
             "complete"
-            if all(d["status"] == "complete" for d in state["datasets"].values())
+            if all(
+                state["datasets"].get(d.id, {}).get("status") == "complete"
+                for d in registry.datasets
+            )
             else "partial"
         )
         atomic_write_json(state_path, state)
@@ -124,6 +133,11 @@ if __name__ == "__main__":
     p.add_argument("--registry", type=Path, required=True)
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--state", type=Path, required=True)
+    p.add_argument(
+        "--only-datasets",
+        nargs="+",
+        help="Resume selected sources without changing registry identity",
+    )
     p.add_argument("--max-source-bytes", type=int, default=100 * 1024**3)
     p.add_argument("--max-total-bytes", type=int, default=180 * 1024**3)
     p.add_argument("--free-headroom-bytes", type=int, default=100 * 1024**3)
