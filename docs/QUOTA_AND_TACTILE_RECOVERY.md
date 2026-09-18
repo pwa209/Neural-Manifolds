@@ -28,6 +28,25 @@ Recording paths use the source's EEGLAB `.set` files with their companion `.fdt`
 files, not an assumed BrainVision header. Preserve the logical BIDS path when
 opening annex-managed files so companion-file lookup remains valid.
 
+## Source payload integrity and full-epoch preflight
+
+Validate the external float32 payload against the header's original channel and
+sample counts before selecting channels or reading epochs. A short file may be
+excluded as a source defect only when its bytes match both the size and MD5 in
+the pinned acquisition's annex key. Unverified truncation, checksum mismatch,
+unexpected layout, or another I/O failure remains an error requiring repair.
+
+Exclude the entire verified incomplete recording, not just its missing tail.
+Record the header/payload sizes, checksum evidence, file, participant, and every
+affected unit in the result audit. Preserve the raw file unchanged. If no usable
+epochs remain, do not emit a successful analysis. This technical exclusion does
+not depend on any statistical result and is not a scientific gate.
+
+The tactile Slurm preflight now attempts **every eligible epoch read** for each
+complete recording, with feature checks at its beginning, middle and end. The
+previous first-trial-only canary could not detect a truncated tail. A preflight
+pass is still not a completed inferential analysis.
+
 ## Controller recovery
 
 `scripts/alliance/supervise_controller.py` runs from the original qualified

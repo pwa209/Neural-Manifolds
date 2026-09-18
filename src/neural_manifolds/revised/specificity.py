@@ -18,7 +18,6 @@ from neural_manifolds.adapters.datasets import (
 )
 from neural_manifolds.continuous.audit import safe_member
 from neural_manifolds.provenance import atomic_write_json, sha256_file
-from neural_manifolds.stage_processing import read_raw_recording
 
 INTERVALS = {
     "prestimulus": (-0.2, 0.0),
@@ -287,9 +286,14 @@ def run_osf(release: Path, output: Path, policy: dict):
 
 
 def run_tactile(release: Path, output: Path, policy: dict):
+    from neural_manifolds.revised.tactile_io import (
+        IncompleteSourceRecordingError,
+        open_tactile_recording,
+    )
+
     participants = pd.read_csv(release / "participants.tsv", sep="\t")
     event_files = list(release.glob("sub-*/ses-*/eeg/*task-adapt*_events.tsv"))
-    rows, unavailable = [], []
+    rows, unavailable, recording_audit = [], [], []
     for event_file in event_files:
         relative = event_file.relative_to(release).as_posix()
         events = pd.read_csv(event_file, sep="\t")
@@ -301,7 +305,21 @@ def run_tactile(release: Path, output: Path, policy: dict):
         )
         if not units:
             continue
-        raw = read_raw_recording(release / units[0].source_file)
+        try:
+            raw, payload_audit = open_tactile_recording(release / units[0].source_file)
+        except IncompleteSourceRecordingError as exc:
+            recording_audit.append({"source_file": units[0].source_file, **exc.audit})
+            unavailable.extend(
+                {
+                    "unit_id": unit.unit_id,
+                    "participant_id": unit.participant_id,
+                    "source_file": unit.source_file,
+                    "reason": "verified_incomplete_source_recording",
+                }
+                for unit in units
+            )
+            continue
+        recording_audit.append({"source_file": units[0].source_file, **payload_audit})
         try:
             raw.pick("eeg")
             sfreq = float(raw.info["sfreq"])
@@ -332,6 +350,8 @@ def run_tactile(release: Path, output: Path, policy: dict):
                     unavailable.append({"unit_id": unit.unit_id, "reason": str(exc)})
         finally:
             raw.close()
+    if not rows:
+        raise ValueError("no_usable_tactile_epochs_after_recording_qc")
     frame = pd.DataFrame(rows)
     contrasts = [
         ("detected_minus_undetected", "tactile_detected", "tactile_undetected"),
@@ -360,6 +380,7 @@ def run_tactile(release: Path, output: Path, policy: dict):
         ),
         "stimulus_time_reference": "bids_stim_adapt_event_onset",
         "trial_relative_stimon_added_to_event_onset": False,
+        "recording_audit": recording_audit,
         "unavailable": unavailable,
         "scientific_gates": False,
         "limitations": [
@@ -369,6 +390,7 @@ def run_tactile(release: Path, output: Path, policy: dict):
             "confidence_preserved_not_merged_into_detection_label",
             "unanswered_trials_excluded_and_audited_not_reclassified_as_undetected",
             "non_adaptive_stim_thr_markers_excluded_and_audited",
+            "checksum_verified_incomplete_source_recordings_excluded_whole_not_prefix_salvaged",
         ],
     }
     atomic_write_json(output / "specificity.json", result)
