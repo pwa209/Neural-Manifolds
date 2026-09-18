@@ -9,19 +9,24 @@ Capacity failures pause progression until headroom returns; they no longer make
 the error-reporting path terminate recovery. This is not protection against a
 login-host process termination or a guarantee of future shared quota capacity.
 
-The quota-failed null replicate is running again with a new output path; its
-failed output and job history were preserved. The repaired tactile analysis is
-queued behind that retry to respect concurrency limits. It explicitly audits
+The quota-failed null replicate completed with a new output path; all 100 core
+null receipts are verified. Its failed output and job history were preserved.
+The repaired tactile analysis has also completed with a verified output receipt.
+It explicitly audits
 missing response markers and non-adaptive events, uses the source's EEGLAB
 recordings, and epochs on stimulus-event timestamps without adding the
-trial-relative delay twice. The corrected recording-level canary completed on
-the server. Successful TMS/report-task analyses and existing null outputs were
+trial-relative delay twice. A later-read failure exposed a pinned source payload
+shorter than its header declares. The bytes match the published annex checksum;
+the entire incomplete recording is now explicitly excluded, not prefix-salvaged
+or silently recoded. Raw data are unchanged. An expanded server preflight read
+every eligible epoch in all complete recordings before the successful full run.
+Successful TMS/report-task analyses and existing null outputs were
 not rerun. The independent high-density chain was left running.
 
-Validation: **337 local tests passed, five platform/dependency skips**; targeted
-cluster tests and the all-recording tactile canary passed. Requeued does not
-mean scientifically complete: the full tactile analysis, remaining nulls, and
-dependent evidence updates still need successful completion receipts. See
+Validation: **343 local tests passed, five platform/dependency skips**; 31 targeted
+cluster tests and the full-epoch tactile preflight passed. This repairs the
+tactile operational blocker; it is not a claim that the full study or independent
+high-density control/evidence chain is complete. See
 [recovery policy](docs/QUOTA_AND_TACTILE_RECOVERY.md).
 
 ## Revised continuous deployment — 16 September 2026
