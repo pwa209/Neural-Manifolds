@@ -17,8 +17,16 @@ The default adapter remains strict unless an explicit exclusion sink is given.
 The public source also contains `stim-thr` events inside an adaptive-task file.
 These are separately audited and excluded, never converted into adaptive trials.
 Responses without an adaptive stimulus still fail; matching cannot cross such a
-marker. Source rows whose response precedes the computed stimulus onset retain
-the existing driver's explicit timing exclusion.
+marker. Epochs use the BIDS `stim-adapt` event's `onset`. The source describes
+`stimon` as latency relative to trial start; it is retained as metadata and must
+not be added again to the stimulus marker. A source-table consistency audit
+checks that response-marker minus stimulus-marker timing varies inversely with
+the trial-relative stimulus delay. This supports the event-label interpretation;
+it does not validate millisecond hardware latency. Any genuinely negative
+response-relative timing retains the driver's explicit exclusion.
+Recording paths use the source's EEGLAB `.set` files with their companion `.fdt`
+files, not an assumed BrainVision header. Preserve the logical BIDS path when
+opening annex-managed files so companion-file lookup remains valid.
 
 ## Controller recovery
 

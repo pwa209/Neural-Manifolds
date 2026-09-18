@@ -358,6 +358,8 @@ def run_tactile(release: Path, output: Path, policy: dict):
         "confidence_associations": confidence_associations(
             frame, policy["bootstrap_repetitions"], policy["seed"]
         ),
+        "stimulus_time_reference": "bids_stim_adapt_event_onset",
+        "trial_relative_stimon_added_to_event_onset": False,
         "unavailable": unavailable,
         "scientific_gates": False,
         "limitations": [

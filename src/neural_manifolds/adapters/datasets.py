@@ -401,7 +401,7 @@ class TactileDetectionAdapter:
                 stimon = number(pending["stimon"], field="stimon", minimum=0)
                 confidence = number(row["confidence"], field="confidence", minimum=0, maximum=1)
                 assert onset is not None and stimon is not None and confidence is not None
-                source_file = path.removesuffix("_events.tsv") + "_eeg.vhdr"
+                source_file = path.removesuffix("_events.tsv") + "_eeg.set"
                 units.append(
                     AnalysisUnit(
                         dataset_id=self.dataset_id,
@@ -413,7 +413,9 @@ class TactileDetectionAdapter:
                         modality="eeg",
                         selector=SignalSelector(
                             kind="event_epoch",
-                            event_onset_seconds=onset + stimon,
+                            # BIDS onset belongs to the stim-adapt event itself;
+                            # stimon is relative to trial start, not this marker.
+                            event_onset_seconds=onset,
                             epoch_start_offset_seconds=-0.4,
                             epoch_stop_offset_seconds=0.8,
                         ),
@@ -432,6 +434,8 @@ class TactileDetectionAdapter:
                                 pending["stimamp"], field="stimamp", minimum=0
                             ),
                             "first_order_response": marker,
+                            "stimulus_delay_from_trial_start_seconds": stimon,
+                            "stimulus_time_reference": "bids_stim_adapt_event_onset",
                             "first_order_response_onset_seconds": number(
                                 row["onset"], field="response_onset", minimum=0
                             ),

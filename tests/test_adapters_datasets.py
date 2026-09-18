@@ -172,12 +172,13 @@ def _tactile_event(
     }
 
 
-def test_ds001785_builds_trial_level_event_selectors() -> None:
+@pytest.mark.parametrize("stimon", [0.05, 1.9])
+def test_ds001785_builds_trial_level_event_selectors(stimon) -> None:
     participants = pd.DataFrame([{"participant_id": "sub-001", "age": 22, "sex": "F"}])
     path = "sub-001/ses-01/eeg/sub-001_ses-01_task-adapt_run-1_events.tsv"
     events = pd.DataFrame(
         [
-            _tactile_event("stim-adapt", onset=1.0, stimon=0.05),
+            _tactile_event("stim-adapt", onset=1.0, stimon=stimon),
             _tactile_event("hit", onset=1.4, confidence=0.91),
             _tactile_event("conf", onset=1.5),
             _tactile_event("conf-resp", onset=1.6),
@@ -185,10 +186,11 @@ def test_ds001785_builds_trial_level_event_selectors() -> None:
     )
     unit = TactileDetectionAdapter().adapt(participants, {path: events})[0]
     assert unit.condition == "tactile_detected"
-    assert unit.selector.event_onset_seconds == pytest.approx(1.05)
+    assert unit.selector.event_onset_seconds == pytest.approx(1.0)
+    assert unit.variables["stimulus_delay_from_trial_start_seconds"] == pytest.approx(stimon)
     assert unit.selector.epoch_start_offset_seconds == -0.4
     assert unit.variables["confidence"] == pytest.approx(0.91)
-    assert unit.source_file.endswith("_eeg.vhdr")
+    assert unit.source_file.endswith("_eeg.set")
 
 
 def test_native_tables_reject_unverified_columns() -> None:
@@ -216,7 +218,7 @@ def test_tactile_missing_responses_are_audited_without_shifting_response_times()
     units = TactileDetectionAdapter().adapt(participants, {path: events}, missing_responses=missing)
     assert len(units) == 1
     assert units[0].condition == "tactile_detected"
-    assert units[0].selector.event_onset_seconds == pytest.approx(2.05)
+    assert units[0].selector.event_onset_seconds == pytest.approx(2.0)
     assert units[0].variables["first_order_response_onset_seconds"] == pytest.approx(2.4)
     assert [r["stimulus_index"] for r in missing] == [0, 2]
     assert all(r["reason"] == "missing_first_order_response" for r in missing)
@@ -262,7 +264,7 @@ def test_tactile_non_adaptive_markers_are_separately_audited():
     )
     assert len(units) == len(excluded) == 1
     assert excluded[0]["reason"] == "non_adaptive_stim_thr_excluded"
-    assert units[0].selector.event_onset_seconds == pytest.approx(2.05)
+    assert units[0].selector.event_onset_seconds == pytest.approx(2.0)
     orphan = pd.DataFrame([_tactile_event("stim-thr", onset=1), _tactile_event("hit", onset=1.4)])
     with pytest.raises(SchemaError, match="without a preceding stimulus"):
         TactileDetectionAdapter().adapt(participants, {path: orphan}, non_adaptive_events=[])
