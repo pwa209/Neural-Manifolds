@@ -241,6 +241,33 @@ def test_tactile_audit_does_not_silence_orphan_responses() -> None:
         )
 
 
+def test_tactile_non_adaptive_markers_are_separately_audited():
+    participants = pd.DataFrame([{"participant_id": "sub-001", "age": 22, "sex": "F"}])
+    path = "sub-001/ses-01/eeg/sub-001_ses-01_task-adapt_run-1_events.tsv"
+    events = pd.DataFrame(
+        [
+            _tactile_event("stim-thr", onset=1),
+            _tactile_event("stim-adapt", onset=2),
+            _tactile_event("hit", onset=2.4),
+        ]
+    )
+    with pytest.raises(SchemaError, match="undocumented"):
+        TactileDetectionAdapter().adapt(participants, {path: events}, missing_responses=[])
+    excluded = []
+    units = TactileDetectionAdapter().adapt(
+        participants,
+        {path: events},
+        missing_responses=[],
+        non_adaptive_events=excluded,
+    )
+    assert len(units) == len(excluded) == 1
+    assert excluded[0]["reason"] == "non_adaptive_stim_thr_excluded"
+    assert units[0].selector.event_onset_seconds == pytest.approx(2.05)
+    orphan = pd.DataFrame([_tactile_event("stim-thr", onset=1), _tactile_event("hit", onset=1.4)])
+    with pytest.raises(SchemaError, match="without a preceding stimulus"):
+        TactileDetectionAdapter().adapt(participants, {path: orphan}, non_adaptive_events=[])
+
+
 def test_osf_condition_parser_and_download_time_signal_assertion() -> None:
     adapter = SomatosensoryReportTaskAdapter()
     relevant = adapter.build_unit(

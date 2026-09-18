@@ -14,6 +14,11 @@ marker onset, unit ID and exclusion reason. Trial IDs include excluded stimuli,
 and each retained unit carries its own matched response onset, avoiding an
 ordinal join after exclusions. Unknown markers and orphan responses still fail.
 The default adapter remains strict unless an explicit exclusion sink is given.
+The public source also contains `stim-thr` events inside an adaptive-task file.
+These are separately audited and excluded, never converted into adaptive trials.
+Responses without an adaptive stimulus still fail; matching cannot cross such a
+marker. Source rows whose response precedes the computed stimulus onset retain
+the existing driver's explicit timing exclusion.
 
 ## Controller recovery
 

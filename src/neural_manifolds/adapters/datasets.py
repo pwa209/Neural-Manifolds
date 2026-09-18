@@ -317,6 +317,7 @@ class TactileDetectionAdapter:
         events_by_file: Mapping[str, pd.DataFrame],
         *,
         missing_responses: list[dict] | None = None,
+        non_adaptive_events: list[dict] | None = None,
     ) -> list[AnalysisUnit]:
         """Map observed responses; optionally audit and omit unanswered stimuli.
 
@@ -338,11 +339,32 @@ class TactileDetectionAdapter:
             if participant not in participant_ids:
                 raise SchemaError(f"events participant absent from participants.tsv: {participant}")
             require_exact_columns(events, TACTILE_EVENT_COLUMNS, source=path)
-            require_values(events["trial_type"], self.markers, field=f"{path}.trial_type")
+            allowed = self.markers | ({"stim-thr"} if non_adaptive_events is not None else set())
+            require_values(events["trial_type"], allowed, field=f"{path}.trial_type")
             pending: pd.Series | None = None
             trial_index = 0
-            for _, row in events.iterrows():
+            for event_index, (_, row) in enumerate(events.iterrows()):
                 marker = str(row["trial_type"]).strip()
+                if marker == "stim-thr":
+                    if pending is not None:
+                        raise SchemaError(
+                            f"{path} non-adaptive marker interrupts unmatched stimulus"
+                        )
+                    assert non_adaptive_events is not None
+                    non_adaptive_events.append(
+                        {
+                            "unit_id": make_unit_id(
+                                self.dataset_id, path, "non_adaptive", event_index
+                            ),
+                            "source_file": path,
+                            "event_index": event_index,
+                            "stimulus_marker_onset_seconds": number(
+                                row["onset"], field="onset", minimum=0
+                            ),
+                            "reason": "non_adaptive_stim_thr_excluded",
+                        }
+                    )
+                    continue
                 if marker == "stim-adapt":
                     if pending is not None:
                         if missing_responses is None:

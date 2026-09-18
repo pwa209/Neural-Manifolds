@@ -294,7 +294,10 @@ def run_tactile(release: Path, output: Path, policy: dict):
         relative = event_file.relative_to(release).as_posix()
         events = pd.read_csv(event_file, sep="\t")
         units = TactileDetectionAdapter().adapt(
-            participants, {relative: events}, missing_responses=unavailable
+            participants,
+            {relative: events},
+            missing_responses=unavailable,
+            non_adaptive_events=unavailable,
         )
         if not units:
             continue
@@ -363,6 +366,7 @@ def run_tactile(release: Path, output: Path, policy: dict):
             "causal_filter_delay_reported_not_removed",
             "confidence_preserved_not_merged_into_detection_label",
             "unanswered_trials_excluded_and_audited_not_reclassified_as_undetected",
+            "non_adaptive_stim_thr_markers_excluded_and_audited",
         ],
     }
     atomic_write_json(output / "specificity.json", result)
