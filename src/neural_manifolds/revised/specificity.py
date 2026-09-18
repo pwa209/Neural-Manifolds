@@ -293,19 +293,16 @@ def run_tactile(release: Path, output: Path, policy: dict):
     for event_file in event_files:
         relative = event_file.relative_to(release).as_posix()
         events = pd.read_csv(event_file, sep="\t")
-        units = TactileDetectionAdapter().adapt(participants, {relative: events})
+        units = TactileDetectionAdapter().adapt(
+            participants, {relative: events}, missing_responses=unavailable
+        )
         if not units:
             continue
         raw = read_raw_recording(release / units[0].source_file)
         try:
             raw.pick("eeg")
             sfreq = float(raw.info["sfreq"])
-            response_rows = events[events.trial_type.isin(["hit", "miss", "cr", "fa"])].reset_index(
-                drop=True
-            )
-            if len(response_rows) != len(units):
-                raise ValueError("response_marker_alignment_changed")
-            for index, unit in enumerate(units):
+            for unit in units:
                 try:
                     onset = unit.selector.event_onset_seconds
                     start, stop = round((onset - 0.4) * sfreq), round((onset + 0.8) * sfreq)
@@ -313,7 +310,7 @@ def run_tactile(release: Path, output: Path, policy: dict):
                         raise ValueError("epoch_outside_recording")
                     epoch = raw.get_data(start=start, stop=stop, reject_by_annotation="NaN")
                     times = np.arange(epoch.shape[1]) / sfreq - 0.4
-                    response = float(response_rows.iloc[index].onset) - onset
+                    response = unit.variables["first_order_response_onset_seconds"] - onset
                     if response < 0:
                         raise ValueError("response_precedes_stimulus")
                     values, _ = fast_features(epoch, times, sfreq, response_seconds=response)
@@ -365,6 +362,7 @@ def run_tactile(release: Path, output: Path, policy: dict):
             "exact_intensity_matching_can_reduce_sample_size",
             "causal_filter_delay_reported_not_removed",
             "confidence_preserved_not_merged_into_detection_label",
+            "unanswered_trials_excluded_and_audited_not_reclassified_as_undetected",
         ],
     }
     atomic_write_json(output / "specificity.json", result)

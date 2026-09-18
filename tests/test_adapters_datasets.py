@@ -199,6 +199,48 @@ def test_native_tables_reject_unverified_columns() -> None:
         TactileDetectionAdapter().adapt(participants, {})
 
 
+def test_tactile_missing_responses_are_audited_without_shifting_response_times() -> None:
+    participants = pd.DataFrame([{"participant_id": "sub-001", "age": 22, "sex": "F"}])
+    path = "sub-001/ses-01/eeg/sub-001_ses-01_task-adapt_run-1_events.tsv"
+    events = pd.DataFrame(
+        [
+            _tactile_event("stim-adapt", onset=1),
+            _tactile_event("stim-adapt", onset=2),
+            _tactile_event("hit", onset=2.4),
+            _tactile_event("stim-adapt", onset=3),
+        ]
+    )
+    with pytest.raises(SchemaError, match="without a first-order response"):
+        TactileDetectionAdapter().adapt(participants, {path: events})
+    missing = []
+    units = TactileDetectionAdapter().adapt(participants, {path: events}, missing_responses=missing)
+    assert len(units) == 1
+    assert units[0].condition == "tactile_detected"
+    assert units[0].selector.event_onset_seconds == pytest.approx(2.05)
+    assert units[0].variables["first_order_response_onset_seconds"] == pytest.approx(2.4)
+    assert [r["stimulus_index"] for r in missing] == [0, 2]
+    assert all(r["reason"] == "missing_first_order_response" for r in missing)
+    assert len({units[0].unit_id, *(r["unit_id"] for r in missing)}) == 3
+    complete = pd.concat(
+        [events.iloc[:1], pd.DataFrame([_tactile_event("miss", onset=1.4)]), events.iloc[1:3]]
+    )
+    assert (
+        TactileDetectionAdapter().adapt(participants, {path: complete})[1].unit_id
+        == units[0].unit_id
+    )
+
+
+def test_tactile_audit_does_not_silence_orphan_responses() -> None:
+    participants = pd.DataFrame([{"participant_id": "sub-001", "age": 22, "sex": "F"}])
+    path = "sub-001/ses-01/eeg/sub-001_ses-01_task-adapt_run-1_events.tsv"
+    with pytest.raises(SchemaError, match="without a preceding stimulus"):
+        TactileDetectionAdapter().adapt(
+            participants,
+            {path: pd.DataFrame([_tactile_event("hit", onset=2)])},
+            missing_responses=[],
+        )
+
+
 def test_osf_condition_parser_and_download_time_signal_assertion() -> None:
     adapter = SomatosensoryReportTaskAdapter()
     relevant = adapter.build_unit(

@@ -315,7 +315,15 @@ class TactileDetectionAdapter:
         self,
         participants: pd.DataFrame,
         events_by_file: Mapping[str, pd.DataFrame],
+        *,
+        missing_responses: list[dict] | None = None,
     ) -> list[AnalysisUnit]:
+        """Map observed responses; optionally audit and omit unanswered stimuli.
+
+        Without an explicit audit sink, unmatched stimuli remain schema errors.
+        Trial identities count stimuli, including unanswered ones, so exclusions
+        cannot shift subsequent trial lineage. Missing is never a miss or CR.
+        """
         require_exact_columns(
             participants, TACTILE_PARTICIPANT_COLUMNS, source="ds001785 participants.tsv"
         )
@@ -337,7 +345,22 @@ class TactileDetectionAdapter:
                 marker = str(row["trial_type"]).strip()
                 if marker == "stim-adapt":
                     if pending is not None:
-                        raise SchemaError(f"{path} has a stimulus without a first-order response")
+                        if missing_responses is None:
+                            raise SchemaError(
+                                f"{path} has a stimulus without a first-order response"
+                            )
+                        missing_responses.append(
+                            {
+                                "unit_id": make_unit_id(self.dataset_id, path, trial_index),
+                                "source_file": path,
+                                "stimulus_index": trial_index,
+                                "stimulus_marker_onset_seconds": number(
+                                    pending["onset"], field="onset", minimum=0
+                                ),
+                                "reason": "missing_first_order_response",
+                            }
+                        )
+                        trial_index += 1
                     pending = row
                     continue
                 if marker not in {"hit", "miss", "cr", "fa"}:
@@ -387,13 +410,28 @@ class TactileDetectionAdapter:
                                 pending["stimamp"], field="stimamp", minimum=0
                             ),
                             "first_order_response": marker,
+                            "first_order_response_onset_seconds": number(
+                                row["onset"], field="response_onset", minimum=0
+                            ),
                         },
                     )
                 )
                 trial_index += 1
                 pending = None
             if pending is not None:
-                raise SchemaError(f"{path} ends with an unmatched stimulus")
+                if missing_responses is None:
+                    raise SchemaError(f"{path} ends with an unmatched stimulus")
+                missing_responses.append(
+                    {
+                        "unit_id": make_unit_id(self.dataset_id, path, trial_index),
+                        "source_file": path,
+                        "stimulus_index": trial_index,
+                        "stimulus_marker_onset_seconds": number(
+                            pending["onset"], field="onset", minimum=0
+                        ),
+                        "reason": "missing_first_order_response",
+                    }
+                )
         return units
 
 
