@@ -38,7 +38,8 @@ one portfolio. Each cell is atomically checkpointed into a checksummed aggregate
 record; no participant predictions are exported. `aggregate` refuses a reduced
 denominator and reports missing seeds instead of issuing partial final p-values.
 
-Use one CPU per task with up to 50 concurrent tasks. A dependent second pass
+The initial submission used one CPU per task with up to 50 concurrent tasks.
+The current operational limit is 100, as recorded below. A dependent second pass
 retries the same task indices and skips completed cells. The final aggregation
 is queued after that pass. `scripts/alliance/queue_null_extension.py` checks the
 association's job-slot headroom and records each submission durably. It refuses
@@ -49,6 +50,26 @@ there is no desktop heartbeat or newly installed monitor. Operational receipts
 and scheduler IDs are private in `work/` and on the data host. New checkpoints
 belong in project-scoped scratch storage to avoid the nearly full project inode
 quota; final aggregate tables and the sealed plan belong in project storage.
+
+### Operational amendment: 100 CPUs
+
+On 20 September 2026, at the user's request, the live continuation and dependent
+retry arrays were both increased from 50 to 100 concurrent one-CPU tasks using
+Slurm's `scontrol update JobId=<array_id> ArrayTaskThrottle=100`. This is a
+scheduler-only amendment: existing jobs are not cancelled, restarted or duplicated.
+The final aggregation dependency and one-CPU-per-task setting are preserved.
+Actual concurrency depends on scheduler availability; 100 is the cap, not a
+guarantee of an immediate doubling in throughput.
+
+The immutable scientific plan and deployed runner remain byte-identical, including
+the plan's historical initial resource limit of 50. A separate, timestamped
+`operational-amendments/` receipt next to the server-side plan records the new
+effective limit, before/after Slurm settings and the unchanged plan checksum.
+Do not edit or reseal the scientific plan merely to change scheduler concurrency:
+existing checkpoint identities must remain valid. The 5,000 refits, 72 tests,
+cohorts, seeds, fitting procedure and observations are unchanged. The original
+submission helper retains its initial 50-task default; this amendment applies
+to the already-submitted arrays, including their automatic retry pass.
 
 ## Reporting and manuscript status
 
