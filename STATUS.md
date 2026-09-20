@@ -1,5 +1,22 @@
 # Project status
 
+## Completed-run evidence review — 20 September 2026
+
+The deployed core and supplementary high-density computation, including all
+planned control replicates and both synthesis jobs, has completed with verified
+output hashes. A separate exploratory review now inventories completed and
+unavailable branches, evaluates null comparisons, audits conditional precision,
+adds boundary multiplicity correction, maps public non-imputed subjective scales,
+and diagnoses observation-length/segmentation effects in a bounded simulation.
+Original empirical outputs remain unchanged. See the
+[review methods](docs/COMPLETED_EVIDENCE_REVIEW.md) and reproducible scripts.
+
+This is not preregistered research, a scientific stopping gate, or a declaration
+of publication readiness. Full empirical calibration, model-refitting uncertainty,
+figure QA and final manuscript interpretation are not implied by job completion.
+Private result values, participant tables and operational identities are excluded
+from this public status record.
+
 ## Controller and tactile recovery — 18 September 2026
 
 The quota-interrupted controller has resumed under a source-aware supervisor.
