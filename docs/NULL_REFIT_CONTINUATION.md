@@ -1,0 +1,60 @@
+# Fixed-count null-control continuation
+
+The user approved extending every reviewed null distribution from 100 to 5,000
+refits on 20 September 2026. This is an exploratory post-results extension, not
+preregistration. It must not be stopped or narrowed according to significance.
+
+## Scientific contract
+
+- Keep the entire 72-comparison family: two portfolios, three representations,
+  three null mechanisms and four matched statistics.
+- Preserve all observed predictions, cohort definitions, transforms, estimator
+  code, hyperparameter grids, loss weights and null mechanisms.
+- Verify and reuse original replicate indices 0–99; add indices 100–4999 with
+  the original seed rule. A failed seed is retried, never replaced or dropped.
+- Repeat the complete original nested fit per null cell. The new runner caches
+  read-only inputs within a job and saves completed cells; it does not substitute
+  fixed-model shuffling for nested refitting.
+- Verify one complete original replicate per portfolio before launching new
+  seeds. This is an engineering equivalence check, not a scientific outcome gate.
+- Compute final tails with denominator 5,001 only when every cell is complete.
+  Apply Holm once over all 72 tests, preserving raw tails, all refit statistics,
+  and Monte Carlo binomial intervals. These intervals concern simulation error,
+  not biological uncertainty.
+
+The attainable minimum raw tail becomes 1/5,001. This removes the original
+resolution barrier, but does not guarantee significance or fix exchangeability,
+small-study uncertainty, cohort overlap or biological interval calibration.
+
+## Implementation
+
+`scripts/extend_null_controls.py` runs against the original immutable analysis
+release and dependency environment. It does not edit the original control
+driver or synthesis. `prepare` seals a plan with input, implementation and
+observed-statistic checksums. `canary` compares all nine cells of original
+replicate 0 with tolerance rtol=1e-7, atol=1e-8. `worker` uses an interleaved
+portfolio array: 392 tasks, each covering 25 consecutive replicate indices for
+one portfolio. Each cell is atomically checkpointed into a checksummed aggregate
+record; no participant predictions are exported. `aggregate` refuses a reduced
+denominator and reports missing seeds instead of issuing partial final p-values.
+
+Use one CPU per task with up to 50 concurrent tasks. A dependent second pass
+retries the same task indices and skips completed cells. The final aggregation
+is queued after that pass. `scripts/alliance/queue_null_extension.py` checks the
+association's job-slot headroom and records each submission durably. It refuses
+to blindly repeat an ambiguous submission, preventing duplicate arrays. Workers
+request 4 GB RAM and five days; engineering checks request one day, and final
+aggregation one hour. All CPU jobs use the existing cluster scheduler;
+there is no desktop heartbeat or newly installed monitor. Operational receipts
+and scheduler IDs are private in `work/` and on the data host. New checkpoints
+belong in project-scoped scratch storage to avoid the nearly full project inode
+quota; final aggregate tables and the sealed plan belong in project storage.
+
+## Reporting and manuscript status
+
+The existing 100-refit figures, legends and manuscript wording remain historical
+artifacts until all 5,000 refits have been collected and reviewed. Re-export
+Figure 3 and update all affected tables, legends, Methods, Results and Discussion
+after completion. Report unchanged, strengthened and weakened findings alike.
+Do not label the existing manuscript submission-ready while that update is
+pending. No positive result is a condition for completing the study.
