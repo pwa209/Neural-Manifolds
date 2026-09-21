@@ -39,7 +39,7 @@ record; no participant predictions are exported. `aggregate` refuses a reduced
 denominator and reports missing seeds instead of issuing partial final p-values.
 
 The initial submission used one CPU per task with up to 50 concurrent tasks.
-The current operational limit is 100, as recorded below. A dependent second pass
+The current operational limit is 250, as recorded below. A dependent second pass
 retries the same task indices and skips completed cells. The final aggregation
 is queued after that pass. `scripts/alliance/queue_null_extension.py` checks the
 association's job-slot headroom and records each submission durably. It refuses
@@ -70,6 +70,23 @@ existing checkpoint identities must remain valid. The 5,000 refits, 72 tests,
 cohorts, seeds, fitting procedure and observations are unchanged. The original
 submission helper retains its initial 50-task default; this amendment applies
 to the already-submitted arrays, including their automatic retry pass.
+
+### Operational amendment: 250 CPUs
+
+On 21 September 2026, the user requested a concurrency increase into the
+200–250 CPU range. The scheduler accepted the preferred upper limit of 250 for
+both the continuation and dependent retry arrays through an in-place
+`ArrayTaskThrottle=250` update. There was no fallback to 200, cancellation,
+restart, resubmission or duplication of work. Each task still requests one CPU
+and 4 GB RAM; the two arrays remain dependency-ordered rather than simultaneous.
+
+As with the previous resource amendment, the sealed plan and runner were
+verified unchanged. A new timestamped server-side operational receipt records
+the transition from 100 to 250, the verified scheduler settings, and the original
+plan checksum. The historical submission default and plan value are preserved.
+Actual allocation can be below 250 because of scheduler availability and will
+also decrease when fewer than 250 tasks remain. No statistical stopping or
+scientific criterion is changed by this operational amendment.
 
 ## Reporting and manuscript status
 
