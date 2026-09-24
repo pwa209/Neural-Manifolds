@@ -1,14 +1,18 @@
 # Project status
 
-## Larger independent DREAM report-sensitivity extension running — 24 September 2026
+## Larger independent DREAM report-sensitivity extension complete — 24 September 2026
 
 The source-only repair release `e1b12c1fa55e` is deployed on Alliance Rorqual
 as Slurm chain `21743649`–`21743656`, including checkpointed retries. Metadata
 preflight admitted **128 distinct N2 participants** across six datasets; label-
 blind signal measurement retained **126**. The leave-one-dataset-out observed
-analysis completed on all six cohorts; 199 label and 199 temporal null refits
-are running/queued, so there is no final corrected inference yet. One reported
-source case had insufficient clean signal. Three YoungAdults EDF members in the
+analysis completed on all six cohorts. All 199 label and 199 temporal null
+refits completed, the retry pass closed without missing checkpoints, and the
+two-test final aggregation completed. Neither corrected test supports the
+trajectory marker in this broader report-sensitivity sample. This is a
+completed negative validation, not a positive replication of the strict
+experience-versus-no-experience finding. One source case had insufficient
+clean signal. Three YoungAdults EDF members in the
 published ZIP proved unreadable (two local headers, one CRC); the source matches
 Figshare's published MD5, so re-downloading that version would not help. All
 three are recorded as source exclusions. The two earlier failed run directories
