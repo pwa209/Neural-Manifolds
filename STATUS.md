@@ -1,5 +1,23 @@
 # Project status
 
+## LODE external validation queued — 24 September 2026
+
+An independent-laboratory, out-of-domain LODE validation of the **method** is
+deployed on Alliance Rorqual as source release `757ef9b5e1aa` and queued through
+qualification, metadata preflight, signal QC, held-out observed analysis, 999
+label and 999 temporal nested null refits, and final two-test Holm synthesis.
+The Slurm chain is `21742026`–`21742032`; the final job follows the null array.
+These are queued jobs, not completed results. Source data are read from the
+already downloaded personal-scratch DREAM archive; no raw data are copied to
+GitHub. See the [fixed validation declaration](docs/LODE_EXTERNAL_VALIDATION.md).
+
+This is an exploratory, non-preregistered external method test, **not** a
+zero-shot transfer of the original Fp1/C3/O1 model. Its native bipolar pair is
+fixed from label-blind channel metadata, and source bad-channel flags are
+enforced. Before signal QC, 65 clear-label N2 records from 25 participants
+qualify, with eight participants carrying both labels. Model findings, p-values
+and any journal claim remain pending.
+
 ## Completed-run evidence review — 20 September 2026
 
 The deployed core and supplementary high-density computation, including all

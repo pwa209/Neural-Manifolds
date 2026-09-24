@@ -126,7 +126,11 @@ def prepare_window(raw, unit: dict, channels: list[str], policy: dict) -> tuple[
     # Get annotation-based rejections on the original time grid before filtering.
     x = raw.get_data(picks=picks, start=start, stop=stop, reject_by_annotation="NaN")
     annotation_bad = ~np.isfinite(x).all(axis=0)
-    x = x - np.mean(x, axis=0, keepdims=True)
+    reference_mode = policy.get("reference_mode", "observed_common_average")
+    if reference_mode == "observed_common_average":
+        x = x - np.mean(x, axis=0, keepdims=True)
+    elif reference_mode != "native_bipolar_no_rereference":
+        raise ValueError("unknown_reference_mode")
     finite = ~annotation_bad
     # Filter independent finite stretches, never through gaps; mark filter edges.
     clean = np.full((len(picks), round(policy["dream_seconds"] * policy["sampling_hz"])), np.nan)
@@ -155,7 +159,7 @@ def prepare_window(raw, unit: dict, channels: list[str], policy: dict) -> tuple[
         "position_equivalence": unit.get("position_equivalence", "native_named_channel"),
         "position_error_cm": unit.get("position_error_cm", {}),
         "channel_interpolation": False,
-        "reference": "observed_common_average",
+        "reference": reference_mode,
         "filter": "4th_order_butterworth_zero_phase_offline_not_prospective_timing",
         "filter_hz": policy["filter_hz"],
         "annotation_rejected_samples": int(annotation_bad.sum()),

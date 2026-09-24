@@ -1,0 +1,47 @@
+schema_version: 1
+status: prospective_external_test_within_exploratory_nonpreregistered_study
+dataset: dream_set_03_lode
+source: https://doi.org/10.6084/m9.figshare.22147085
+source_sha256:
+  records_csv: a118a66c9aa6fae64964d5ac7cd6a31e63e14c5b3a6138d2473332f3dbbbb5b8
+  data_zip: e3029dd9dbe288a297e39dfd50bb6498e31d7d9773677226a01cecbd2f807889
+population: healthy_home_sleep
+stage_code: '2'
+experience_code: '2'
+no_experience_code: '0'
+excluded_report_code: '1'
+primary_channels: ['Fp1-O1', 'F7-O1']
+source_channel_order: ['Fp1-O1', 'Fp1-O2', 'Fp1-F7', 'F8-F7', 'F7-O1', 'F8-O2', 'Fp1-F8']
+source_bad_channel_rule: exclude_record_if_either_primary_channel_marked_bad
+montage_claim: native_bipolar_two_derivations_not_frozen_Fp1_C3_O1_transfer
+reference_mode: native_bipolar_no_rereference
+dream_seconds: 20
+sampling_hz: 200
+filter_hz: [0.5, 30.0]
+minimum_clean_seconds: 10
+peak_to_peak_volts: 0.0005
+flat_standard_deviation_volts: 0.00000001
+seed: 20260924
+outer_participant_folds: 5
+profile_dimensions: [1, 2]
+regularization: [0.1, 1.0, 10.0]
+null_replicates_per_family: 999
+null_kinds: [label_permutation, temporal_permutation]
+null_chunk_size: 10
+primary_tests:
+  - label_permutation_dynamic_minus_training_constant_log_loss
+  - temporal_permutation_dynamic_absolute_log_loss
+primary_multiplicity: Holm_two_test_family
+tail: lower_plus_one
+secondary_descriptive_models:
+  - spectral_arousal
+  - nonlinear_scalar
+  - conventional_multivariate
+  - shared_dynamics
+participant_cluster_bootstrap_repetitions: 2000
+interpretation:
+  - Not a zero-shot transfer of the frozen three-electrode model.
+  - Labels are retrospective reports, not a ground-truth consciousness state.
+  - Both primary tests and all exclusions are reported regardless of result.
+  - Temporal permutation changes the representation, not the original EEG spectrum.
+  - No scientific result is a deployment gate.
