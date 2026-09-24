@@ -35,6 +35,7 @@ def test_metadata_selects_one_awakening_per_person_before_signal(tmp_path: Path)
         ["C.edf", "C", "person2", "0", "2", "100", ""],
         ["D.edf", "D", "person3", "2", "5", "100", ""],
         ["E.edf", "E", "person4", "2", "2", "100", "Bad channels: C3"],
+        ["F.edf", "F", "person5", "2", "2", "100", ""],
     ]
     stream = io.StringIO()
     writer = csv.writer(stream)
@@ -42,8 +43,13 @@ def test_metadata_selects_one_awakening_per_person_before_signal(tmp_path: Path)
     writer.writerows(records)
     with ZipFile(archive, "w") as z:
         z.writestr("Test/Records.csv", stream.getvalue())
-        for name in "ABCDE":
+        for name in "ABCDEF":
             z.writestr(f"Test/Data/PSG/{name}.edf", _edf_header(["F3", "C3", "O1"]))
+    with ZipFile(archive) as z:
+        broken_header_offset = z.getinfo("Test/Data/PSG/F.edf").header_offset
+    with archive.open("r+b") as stream:
+        stream.seek(broken_header_offset)
+        stream.write(b"\x00\x00\x00\x00")
     policy = yaml.safe_load(Path("configs/dream_recall_extension.yaml").read_text(encoding="utf-8"))
     source = {
         "selection": "n2_one_record_per_person",
@@ -60,6 +66,7 @@ def test_metadata_selects_one_awakening_per_person_before_signal(tmp_path: Path)
         "not_N2": 1,
         "target_channel_flagged_in_source_remarks": 1,
         "additional_awakening_same_person": 1,
+        "unreadable_published_EDF_member:Test/Data/PSG/F.edf:BadZipFile": 1,
     }
     assert len(digest) == 64
 
@@ -107,3 +114,54 @@ def test_training_constant_excludes_held_dataset_labels(monkeypatch):
     assert constants["0"] == 1e-6
     assert np.isclose(constants["1"], 0.5)
     assert np.isclose(constants["2"], 0.5)
+
+
+def test_measurement_serializes_numpy_audit_in_checkpoint(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "source.zip"
+    with ZipFile(archive, "w") as z:
+        z.writestr("Data/PSG/test.edf", b"sample")
+        info = z.getinfo("Data/PSG/test.edf")
+
+    class Raw:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(dream_recall, "read_raw_recording", lambda _path: Raw())
+    monkeypatch.setattr(
+        dream_recall,
+        "prepare_window",
+        lambda *_args: (np.ones((3, 4000)), {"source_sample_stop_exclusive": np.int64(4000)}),
+    )
+    monkeypatch.setattr(
+        dream_recall,
+        "window_qc",
+        lambda *_args: (np.ones((20, 3, 200)), [""] * 20),
+    )
+    monkeypatch.setattr(dream_recall, "conventional_features", lambda *_args: {"delta": 0.5})
+    policy = yaml.safe_load(Path("configs/dream_recall_extension.yaml").read_text(encoding="utf-8"))
+    row = {
+        "unit_id": "unit",
+        "participant_id": "person",
+        "dataset_id": "study",
+        "study_group": "study",
+        "laboratory": "lab",
+        "experience": 1,
+        "report_code": 2,
+        "sleep_stage": 2,
+        "timing_caveat": "none",
+        "report_construct": "recall",
+        "archive_path": str(archive),
+        "archive_bytes": archive.stat().st_size,
+        "member": "Data/PSG/test.edf",
+        "bytes": info.file_size,
+        "crc32": info.CRC,
+        "duration": 100.0,
+        "timing_offset_seconds": 0,
+        "channel_aliases": {},
+    }
+    (tmp_path / "output" / "tmp").mkdir(parents=True)
+    measured = dream_recall._measure_one(row, policy, tmp_path / "output", "sha")
+    assert measured["status"] == "measured"
+    assert dream_recall._read(tmp_path / "output" / "measure" / "unit.json")["preprocessing"] == {
+        "source_sample_stop_exclusive": 4000
+    }

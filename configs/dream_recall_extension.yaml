@@ -51,6 +51,7 @@ sources:
     set_id: 11
     archive_name: 39673915-Dream_YoungAdults.zip
     archive_bytes: 36782182
+    published_md5: f4fba4f3b78ce13d54ad424ed2c09aef
     laboratory: rome
     report_construct: dream_recall_vs_absence_of_recall
     selection: n2_one_record_per_person

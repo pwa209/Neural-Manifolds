@@ -11,7 +11,7 @@ import re
 import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 import pandas as pd
@@ -64,6 +64,13 @@ def _archive_path(root: Path, source: dict) -> Path:
     path = matches[0].resolve()
     if path.stat().st_size != source["archive_bytes"]:
         raise ValueError(f"source_archive_size_changed:{source['set_id']}")
+    if source.get("published_md5"):
+        digest = hashlib.md5(usedforsecurity=False)
+        with path.open("rb") as stream:
+            while block := stream.read(4 * 1024 * 1024):
+                digest.update(block)
+        if digest.hexdigest() != source["published_md5"]:
+            raise ValueError(f"source_archive_differs_from_published_checksum:{source['set_id']}")
     return path
 
 
@@ -149,6 +156,9 @@ def _candidate_rows(
                 remarks = row.get("Remarks", "")
                 if re.search(r"(?:^|[^A-Z0-9])(?:F3|C3|O1|01)(?:[^A-Z0-9]|$)", remarks.upper()):
                     raise ValueError("target_channel_flagged_in_source_remarks")
+            except (BadZipFile, EOFError) as exc:
+                exclusions[f"unreadable_published_EDF_member:{member}:{type(exc).__name__}"] += 1
+                continue
             except ValueError as exc:
                 exclusions[str(exc)] += 1
                 continue
@@ -292,7 +302,11 @@ def _measure_one(row: dict, policy: dict, output: Path, pre_sha: str) -> dict:
                     raw.close()
         windows, reasons = window_qc(values, policy["sampling_hz"], policy)
         keep = np.asarray([not reason for reason in reasons])
-        result.update(clean_seconds=int(keep.sum()), window_reasons=reasons, preprocessing=audit)
+        result.update(
+            clean_seconds=int(keep.sum()),
+            window_reasons=reasons,
+            preprocessing=_jsonable(audit),
+        )
         if keep.sum() < policy["minimum_clean_seconds"]:
             raise ValueError("insufficient_clean_seconds")
         indices = np.flatnonzero(keep)
@@ -313,9 +327,9 @@ def _measure_one(row: dict, policy: dict, output: Path, pre_sha: str) -> dict:
         result.update(
             status="measured", array_path=str(array_path), array_sha256=sha256_file(array_path)
         )
-    except (ValueError, OSError, RuntimeError, KeyError) as exc:
+    except (ValueError, OSError, RuntimeError, KeyError, BadZipFile, EOFError) as exc:
         result.update(status="unavailable", reason=f"{type(exc).__name__}:{exc}")
-    atomic_write_json(checkpoint, result)
+    atomic_write_json(checkpoint, _jsonable(result))
     return result
 
 

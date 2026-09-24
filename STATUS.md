@@ -1,17 +1,20 @@
 # Project status
 
-## Larger independent DREAM report-sensitivity extension queued — 24 September 2026
+## Larger independent DREAM report-sensitivity extension running — 24 September 2026
 
-A separate source-only release `df0ed9f0befa` is deployed on Alliance Rorqual
-with a preflight-to-final Slurm chain `21742156`–`21742163`, including automatic
-checkpointed retry passes for measurement and null tasks. At submission all
-jobs were pending because requested nodes were unavailable; no signal-QC or
-model result is yet claimed. Six already-downloaded open DREAM cohorts on
-personal scratch provide **up to 131 distinct N2 participants before source
-and signal exclusions**, with one awakening per participant, four laboratory
-clusters, and leave-one-dataset-out nested analysis. The source archives are
-read in place, not downloaded again or copied to GitHub. See the
-[extension design](docs/DREAM_RECALL_EXTENSION.md).
+The source-only repair release `e1b12c1fa55e` is deployed on Alliance Rorqual
+as Slurm chain `21743649`–`21743656`, including checkpointed retries. Metadata
+preflight admitted **128 distinct N2 participants** across six datasets; label-
+blind signal measurement retained **126**. The leave-one-dataset-out observed
+analysis completed on all six cohorts; 199 label and 199 temporal null refits
+are running/queued, so there is no final corrected inference yet. One reported
+source case had insufficient clean signal. Three YoungAdults EDF members in the
+published ZIP proved unreadable (two local headers, one CRC); the source matches
+Figshare's published MD5, so re-downloading that version would not help. All
+three are recorded as source exclusions. The two earlier failed run directories
+and their receipts remain intact; the faulty second chain was cancelled to
+avoid wasting cluster resources. Source data stay on personal scratch and are
+not copied to GitHub. See the [extension design](docs/DREAM_RECALL_EXTENSION.md).
 
 This is an exploratory validation of *report/recall sensitivity*, not an
 enlargement of the strict LODE experience-versus-no-experience sample. Several
