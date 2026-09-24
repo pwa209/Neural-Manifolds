@@ -1,0 +1,18 @@
+{
+  "scope": "Original study results only; later LODE and DREAM validations excluded at user request",
+  "figure_1a": "Blank BioRender slot; no scientific content drawn",
+  "statistics_recomputed": false,
+  "original_source_sha256": {
+    "fig02_prediction.pdf": "2921c89fa2f002917b852f8b9aa0d309e31198b2358f54e150415ce42451887c",
+    "fig03_null_controls.pdf": "aec0e26f26c45df0f2f255a34366865f0d217d83afce3a241de225e860ff59fc",
+    "fig04_context_subjective.pdf": "a03ac2085d1470072c74793c571c1ac44034c794ecd79d888cf978aecc867f2f",
+    "fig05_measurement.pdf": "2cf63a37411a4431a59beff4e7c991bddd608aff1386b58b678af16e5402ea8b"
+  },
+  "output_sha256": {
+    "figure01_framework_prediction.pdf": "5c86f39f6d5d806034093a5e6789b7cc4081ed265e4ec9b348b4d91179436b2c",
+    "figure02_null_controls.pdf": "5ca19ca9d467315daab040d4d5899f617d9379bd8612002af94ee8a22d7fcd48",
+    "figure03_context_subjective.pdf": "a03ac2085d1470072c74793c571c1ac44034c794ecd79d888cf978aecc867f2f",
+    "figure04_measurement.pdf": "2cf63a37411a4431a59beff4e7c991bddd608aff1386b58b678af16e5402ea8b",
+    "Figures_1-4_original_results.pdf": "b30b1f065f591de6d343559e0ab50ee149e6d4cc79592a17927abf2d2369dda8"
+  }
+}
