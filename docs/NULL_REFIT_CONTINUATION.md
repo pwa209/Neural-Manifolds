@@ -88,6 +88,23 @@ Actual allocation can be below 250 because of scheduler availability and will
 also decrease when fewer than 250 tasks remain. No statistical stopping or
 scientific criterion is changed by this operational amendment.
 
+### Operational amendment: parallel high-density tail
+
+On 24 September 2026, after 389 of 392 retry-array tasks had completed, the
+three remaining 25-seed tasks left a slow one-CPU-per-chunk tail. At the user's
+request, `scripts/alliance/parallel_null_tail.py` preserved the original sealed
+runner and every existing seed/cell checkpoint, held the pending aggregation
+job, submitted one-seed high-density workers for the 51 unfinished seeds at
+cutover (up to 50 CPUs concurrently), submitted a dependent checkpoint-aware
+retry array for the same seeds, relinked aggregation after that array, and only
+then cancelled the three original running elements. The original analysis
+release, plan checksum, observed statistics, seeds and 72-test family are
+unchanged. An operational manifest and staged submission receipt are stored
+beside the project-side plan; scientific checkpoints remain on scratch. The
+original retry-array elements were cancelled only after the new aggregation
+dependency was verified. The revised Slurm chain is automatic, but the final
+aggregation still refuses incomplete seeds or reduced denominators.
+
 ## Reporting and manuscript status
 
 The existing 100-refit figures, legends and manuscript wording remain historical
