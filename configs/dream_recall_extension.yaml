@@ -1,0 +1,98 @@
+schema_version: 1
+status: exploratory_post_original_results_independent_report_sensitivity
+scientific_gates: false
+registry: DREAM_v6_2025-06-08
+estimand: N2_preawakening_EEG_association_with_subsequent_dream_report_or_impression
+not_equivalent_to: explicit_experience_versus_no_experience
+stage_code: '2'
+positive_code: '2'
+negative_code: '0'
+channels: [F3, C3, O1]
+reference_mode: observed_common_average
+dream_seconds: 20
+sampling_hz: 200
+filter_hz: [0.5, 30.0]
+minimum_clean_seconds: 10
+peak_to_peak_volts: 0.0005
+flat_standard_deviation_volts: 0.00000001
+max_edf_member_bytes: 4294967296
+seed: 20260924
+regularization: [0.1, 1.0, 10.0]
+profile_dimensions: [1, 2]
+null_replicates_per_family: 199
+null_chunk_size: 5
+null_kinds: [label_permutation, temporal_permutation]
+primary_tests:
+  - cohort_stratified_label_permutation_dynamic_minus_training_constant_log_loss
+  - temporal_permutation_dynamic_absolute_log_loss
+primary_multiplicity: Holm_two_test_family
+sources:
+  zhang_wamsley:
+    set_id: 1
+    archive_name: 39504757-Zhang & Wamsley 2019.zip
+    archive_bytes: 1049159479
+    laboratory: furman
+    report_construct: recalled_mental_content_not_explicit_absence
+    selection: nrem_targeted_n2_only
+    timing_offset_seconds: 10
+    timing_caveat: report_marker_can_be_delayed_by_wake
+    channel_aliases: {}
+  children_rome:
+    set_id: 7
+    archive_name: 39494845-ChildrenDreaming.zip
+    archive_bytes: 6343855665
+    laboratory: rome
+    report_construct: dream_report_or_impression_vs_no_recall_or_uncertainty
+    selection: n2_one_record_per_person
+    timing_offset_seconds: 0
+    timing_caveat: morning_diary_and_mixed_impression_category
+    channel_aliases: {'01': O1}
+  young_rome:
+    set_id: 11
+    archive_name: 39673915-Dream_YoungAdults.zip
+    archive_bytes: 36782182
+    laboratory: rome
+    report_construct: dream_recall_vs_absence_of_recall
+    selection: n2_one_record_per_person
+    timing_offset_seconds: 0
+    timing_caveat: morning_diary
+    channel_aliases: {}
+  older_rome:
+    set_id: 12
+    archive_name: 39673768-Older adults.zip
+    archive_bytes: 4780623837
+    laboratory: rome
+    report_construct: dream_recall_vs_absence_of_recall
+    selection: n2_one_record_per_person
+    timing_offset_seconds: 0
+    timing_caveat: morning_diary
+    channel_aliases:
+      F3-A1+A2: F3
+      C3-A1+A2: C3
+      O1-A1+A2: O1
+  brazil_morning:
+    set_id: 14
+    archive_name: 41961984-Brain Institute - Federal University of Rio Grande do Norte.zip
+    archive_bytes: 58797515592
+    laboratory: natal
+    report_construct: dream_recall_vs_no_recall
+    selection: n2_one_record_per_person
+    timing_offset_seconds: 0
+    timing_caveat: morning_report_after_whole_night_recording
+    channel_aliases: {}
+  kumral_freiburg:
+    set_id: 19
+    archive_name: Kumral et al., 2023.zip
+    archive_bytes: 46588397863
+    laboratory: freiburg
+    report_construct: recalled_mental_content_not_explicit_absence
+    selection: n2_one_record_per_person
+    timing_offset_seconds: 0
+    timing_caveat: source_may_end_up_to_60_seconds_before_awakening
+    channel_aliases: {}
+interpretation:
+  - Independent participants are counted once per source; repeated awakenings are not independent people.
+  - Leave-one-dataset-out prediction tests method generality; it is not zero-shot transfer of the original frozen model.
+  - Cohorts have different report definitions, ages, reference systems, and timing; do not pool this endpoint with strict E/NE.
+  - The Rome cohorts are separate participants but one laboratory cluster.
+  - Every QC exclusion and unavailable result must be reported; significance is not a deployment gate.

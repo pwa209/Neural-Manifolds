@@ -1,5 +1,26 @@
 # Project status
 
+## Larger independent DREAM report-sensitivity extension queued — 24 September 2026
+
+A separate source-only release `df0ed9f0befa` is deployed on Alliance Rorqual
+with a preflight-to-final Slurm chain `21742156`–`21742163`, including automatic
+checkpointed retry passes for measurement and null tasks. At submission all
+jobs were pending because requested nodes were unavailable; no signal-QC or
+model result is yet claimed. Six already-downloaded open DREAM cohorts on
+personal scratch provide **up to 131 distinct N2 participants before source
+and signal exclusions**, with one awakening per participant, four laboratory
+clusters, and leave-one-dataset-out nested analysis. The source archives are
+read in place, not downloaded again or copied to GitHub. See the
+[extension design](docs/DREAM_RECALL_EXTENSION.md).
+
+This is an exploratory validation of *report/recall sensitivity*, not an
+enlargement of the strict LODE experience-versus-no-experience sample. Several
+sources use no recall as their negative label; children combine remembered
+experience and an impression of dreaming; one source may end up to 60 seconds
+before awakening. These are stated boundary conditions, not interchangeable
+consciousness labels. All QC exclusions and positive, negative or unavailable
+results will be retained.
+
 ## LODE external validation queued — 24 September 2026
 
 An independent-laboratory, out-of-domain LODE validation of the **method** is
