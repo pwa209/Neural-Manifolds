@@ -104,6 +104,9 @@ beside the project-side plan; scientific checkpoints remain on scratch. The
 original retry-array elements were cancelled only after the new aggregation
 dependency was verified. The revised Slurm chain is automatic, but the final
 aggregation still refuses incomplete seeds or reduced denominators.
+The cutover command must run from the sealed analysis release with the same
+`NM_PROJECT_ROOT`, `NM_SCRATCH_ROOT` and `NM_ENV_RELEASE` used by the original
+qualified runtime; those variables are exported into the new Slurm workers.
 
 ## Reporting and manuscript status
 
